@@ -1,0 +1,262 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-meter.local/schemas/usage-v0.1.schema.json",
+  "title": "Agent Meter Usage Snapshot v0.1",
+  "description": "Credential-free normalized usage snapshot served by GET /usage.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "generated_at", "status", "providers"],
+  "properties": {
+    "schema_version": {
+      "const": "0.1"
+    },
+    "generated_at": {
+      "$ref": "#/$defs/unixSeconds"
+    },
+    "status": {
+      "enum": ["ok", "partial", "error"]
+    },
+    "providers": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {
+        "pattern": "^[a-z][a-z0-9_]*$"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/providerSnapshot"
+      }
+    }
+  },
+  "$defs": {
+    "unixSeconds": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "UTC Unix timestamp in seconds, never milliseconds."
+    },
+    "errorSummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["category", "message", "retryable"],
+      "properties": {
+        "category": {
+          "enum": [
+            "not_configured",
+            "not_installed",
+            "not_authenticated",
+            "auth_expired",
+            "timeout",
+            "network",
+            "upstream",
+            "malformed_response",
+            "cache",
+            "internal"
+          ]
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240,
+          "pattern": "^[^\\r\\n]+$",
+          "description": "Sanitized human-readable message without secrets or raw payloads."
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "code": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80,
+          "pattern": "^[A-Za-z0-9_.:-]+$"
+        }
+      }
+    },
+    "meter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "label", "kind", "unit"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "maxLength": 64
+        },
+        "label": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "kind": {
+          "enum": ["quota", "spend"]
+        },
+        "unit": {
+          "enum": ["percent", "currency", "requests", "tokens"]
+        },
+        "remaining_percentage": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "used": {
+          "type": "number",
+          "minimum": 0
+        },
+        "limit": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "remaining": {
+          "type": "number",
+          "minimum": 0
+        },
+        "currency_code": {
+          "type": "string",
+          "pattern": "^[A-Z]{3}$"
+        },
+        "reset_at": {
+          "type": ["integer", "null"],
+          "minimum": 0,
+          "description": "UTC Unix timestamp in seconds."
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "quota"
+              }
+            },
+            "required": ["kind"]
+          },
+          "then": {
+            "required": ["remaining_percentage"]
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "kind": {
+                "const": "spend"
+              }
+            },
+            "required": ["kind"]
+          },
+          "then": {
+            "required": ["used", "currency_code"],
+            "properties": {
+              "unit": {
+                "const": "currency"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "providerSnapshot": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status",
+        "source",
+        "collected_at",
+        "stale_after_seconds",
+        "meters"
+      ],
+      "properties": {
+        "status": {
+          "enum": ["ok", "stale", "unavailable", "error"]
+        },
+        "source": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "maxLength": 80
+        },
+        "collected_at": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        },
+        "stale_after_seconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "meters": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "$ref": "#/$defs/meter"
+          }
+        },
+        "error": {
+          "$ref": "#/$defs/errorSummary"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "ok"
+              }
+            },
+            "required": ["status"]
+          },
+          "then": {
+            "properties": {
+              "collected_at": {
+                "$ref": "#/$defs/unixSeconds"
+              },
+              "meters": {
+                "minItems": 1
+              }
+            },
+            "not": {
+              "required": ["error"]
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "const": "stale"
+              }
+            },
+            "required": ["status"]
+          },
+          "then": {
+            "required": ["error"],
+            "properties": {
+              "collected_at": {
+                "$ref": "#/$defs/unixSeconds"
+              },
+              "meters": {
+                "minItems": 1
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": {
+                "enum": ["unavailable", "error"]
+              }
+            },
+            "required": ["status"]
+          },
+          "then": {
+            "required": ["error"],
+            "properties": {
+              "collected_at": {
+                "type": "null"
+              },
+              "meters": {
+                "maxItems": 0
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

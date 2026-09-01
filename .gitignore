@@ -1,0 +1,44 @@
+# Canonical project plan lives in Notion.
+PLAN.md
+
+# Credentials and local configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.keystore
+*.jks
+*.secret
+credentials/
+secrets/
+
+# Provider-owned or captured sensitive state
+*.vscdb
+*.har
+*.pcap
+*.pcapng
+*credential-export*
+*raw-response*
+
+# Local runtime data
+usage.json
+*.sqlite
+*.sqlite3
+runtime/
+logs/
+*.log
+
+# Python caches (proposed collector stack)
+.venv/
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# macOS and editor artifacts
+.DS_Store
+*.swp
+*.swo

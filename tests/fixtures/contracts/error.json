@@ -1,0 +1,43 @@
+{
+  "schema_version": "0.1",
+  "generated_at": 2000000000,
+  "status": "error",
+  "providers": {
+    "codex": {
+      "status": "error",
+      "source": "codex_app_server",
+      "collected_at": null,
+      "stale_after_seconds": 600,
+      "meters": [],
+      "error": {
+        "category": "network",
+        "message": "Codex backend is unreachable",
+        "retryable": true
+      }
+    },
+    "cursor": {
+      "status": "unavailable",
+      "source": "cursor_dashboard_connect_rpc",
+      "collected_at": null,
+      "stale_after_seconds": 900,
+      "meters": [],
+      "error": {
+        "category": "not_installed",
+        "message": "Cursor local state is unavailable",
+        "retryable": false
+      }
+    },
+    "claude": {
+      "status": "unavailable",
+      "source": "claude_statusline",
+      "collected_at": null,
+      "stale_after_seconds": 900,
+      "meters": [],
+      "error": {
+        "category": "not_configured",
+        "message": "Claude status-line ingestion is not configured",
+        "retryable": false
+      }
+    }
+  }
+}
