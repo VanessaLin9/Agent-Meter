@@ -31,12 +31,15 @@ runtime/
 logs/
 *.log
 
-# Python caches (proposed collector stack)
+# Python caches and build artifacts
 .venv/
 __pycache__/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+dist/
+build/
+*.egg-info/
 
 # macOS and editor artifacts
 .DS_Store
