@@ -1,7 +1,6 @@
 """Agent Meter Collector package root.
 
-This module is the installable package marker for the local Collector.
-It does not collect provider usage, expose HTTP, or validate snapshots.
+Collector 可安裝 package 標記（PR #1）。不收集 provider usage、不提供 HTTP、不驗證 snapshot。
 
 Inputs: none. This module has no runtime I/O.
 Outputs: package metadata used by quality checks and later modules.

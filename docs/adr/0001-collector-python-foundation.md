@@ -3,6 +3,7 @@
 - Status: Accepted for Milestone 0 dispatch
 - Date: 2026-09-13
 - Task: [Collector foundation 與 quality tooling](https://app.notion.com/p/3cfdf30cc71c81e69222c6047ea88a40)
+- PR: [#1](https://github.com/VanessaLin9/Agent-Meter/pull/1)
 
 ## Context
 

@@ -1,4 +1,7 @@
-"""Foundation checks that the Collector package is actually installed."""
+"""確認 Collector package 真的被安裝（PR #1）。
+
+import 成功不能只靠工作目錄或 editable path。完整 JSON Schema validator 不在這張 PR。
+"""
 
 from importlib.metadata import metadata
 from importlib.resources import files

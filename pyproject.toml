@@ -4,9 +4,11 @@ version = "0.1.0"
 description = "Local Collector for Agent Meter usage snapshots."
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
+# PR #1: M0 runtime deps 必須空白；Pydantic 留給 models，FastAPI 留給 API。
 dependencies = []
 
 [build-system]
+# PR #1: Hatchling 精確版本寫在 build-system，不假設 uv.lock 鎖住隔離 build 工具。
 requires = ["hatchling==1.32.0"]
 build-backend = "hatchling.build"
 
@@ -22,6 +24,7 @@ packages = ["src/agent_meter"]
 
 [tool.uv]
 package = true
+# PR #1: 與 README / setup-uv version 一致；驗證時禁止隱式升級 uv。
 required-version = "==0.12.13"
 
 [tool.ruff]
@@ -42,4 +45,5 @@ files = ["src", "tests"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# PR #1: importlib mode，不用 PYTHONPATH 讓未安裝的 src layout 碰巧通過。
 addopts = ["-ra", "--import-mode=importlib"]

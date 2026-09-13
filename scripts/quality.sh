@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Local and CI quality entrypoint. Fail-fast; never rewrite uv.lock or auto-fix format.
+# PR #1: 本機與 CI 同一條 quality 入口。用 --locked 而非 --frozen，因為 --frozen 會略過 lock freshness。
+# 失敗即停；不改 lock、不自動修格式、不自動安裝 uv。
 
 set -euo pipefail
 

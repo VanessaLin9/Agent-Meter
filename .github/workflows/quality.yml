@@ -15,6 +15,7 @@ concurrency:
 
 jobs:
   quality:
+    # PR #1: 固定顯示 Quality (macOS) / Quality (Linux)；admin 加 required checks 時用實際 check-run name，不要猜組合字串。
     name: Quality (${{ matrix.os-name }})
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
@@ -38,4 +39,5 @@ jobs:
           enable-cache: true
 
       - name: Run quality checks
+        # PR #1: 呼叫 scripts/quality.sh，避免本機與 CI 指令分岔。
         run: bash scripts/quality.sh

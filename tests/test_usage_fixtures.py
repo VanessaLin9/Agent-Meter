@@ -1,4 +1,7 @@
-"""Smoke-check committed usage fixtures without JSON Schema validation."""
+"""對已 commit 的 usage fixtures 做頂層欄位 smoke（PR #1）。
+
+這不是 JSON Schema validation；`invalid/` 與 Draft 2020-12 validator 留給 models task。
+"""
 
 from __future__ import annotations
 
