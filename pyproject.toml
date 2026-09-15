@@ -1,0 +1,49 @@
+[project]
+name = "agent-meter"
+version = "0.1.0"
+description = "Local Collector for Agent Meter usage snapshots."
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+# PR #1: M0 runtime deps 必須空白；Pydantic 留給 models，FastAPI 留給 API。
+dependencies = []
+
+[build-system]
+# PR #1: Hatchling 精確版本寫在 build-system，不假設 uv.lock 鎖住隔離 build 工具。
+requires = ["hatchling==1.32.0"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "mypy==2.3.1",
+    "pytest==9.1.1",
+    "ruff==0.16.7",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/agent_meter"]
+
+[tool.uv]
+package = true
+# PR #1: 與 README / setup-uv version 一致；驗證時禁止隱式升級 uv。
+required-version = "==0.12.13"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["agent_meter"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+files = ["src", "tests"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# PR #1: importlib mode，不用 PYTHONPATH 讓未安裝的 src layout 碰巧通過。
+addopts = ["-ra", "--import-mode=importlib"]

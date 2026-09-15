@@ -35,12 +35,14 @@ provider transport -> adapter parser -> domain model <- API/cache/ESP32 contract
 
 ## Agent navigation
 
-實作尚未建立前，先從以下位置理解專案：
-
 1. `/AGENTS.md`
 2. `/docs/contracts/README.md`
 3. `/schemas/usage-v0.1.schema.json`
 4. `/tests/fixtures/contracts/`
 5. 對應的 `/docs/providers/<provider>.md`
+6. Collector package root：`/src/agent_meter/`
+7. Offline tests：`/tests/`
+8. Local/CI quality entrypoint：`/scripts/quality.sh`
+9. Foundation toolchain decision：`/docs/adr/0001-collector-python-foundation.md`
 
-程式碼建立後，各 component 的入口 module 必須連回相關 contract，並以 `CONTRACT:`、`SECURITY:`、`PROVIDER:`、`FALLBACK:` 標記不容易從 type system 看出的關鍵 invariant。
+Milestone 0 只有 package 骨架與品質工具。Adapter、normalizer、orchestrator、cache 與 HTTP API 尚未建立。各 component 的入口 module 必須連回相關 contract，並以 `CONTRACT:`、`SECURITY:`、`PROVIDER:`、`FALLBACK:` 標記不容易從 type system 看出的關鍵 invariant。
