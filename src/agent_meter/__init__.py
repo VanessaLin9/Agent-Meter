@@ -1,7 +1,8 @@
 """Agent Meter Collector package root.
 
-Collector 可安裝 package。Normalized snapshot models live in `agent_meter.models`.
-This package still does not collect provider usage or serve HTTP.
+Collector 可安裝 package 標記（PR #1）。Normalized snapshot models live in
+`agent_meter.models`（PR #2）。This package still does not collect provider
+usage or serve HTTP.
 
 Inputs: none. This module has no runtime I/O.
 Outputs: package metadata used by quality checks and later modules.

@@ -1,4 +1,4 @@
-"""Normalized usage snapshot models.
+"""Normalized usage snapshot models（PR #2）。
 
 Responsibility: typed, credential-free GET /usage snapshot used by later
 cache and API layers. This module validates the v0.1 transport contract.
@@ -24,9 +24,9 @@ from pydantic import (
     field_validator,
 )
 
-# CONTRACT: generated_at, collected_at, and reset_at are UTC Unix seconds.
+# CONTRACT: generated_at, collected_at, and reset_at are UTC Unix seconds（PR #2）。
 UnixSeconds = Annotated[int, Field(ge=0)]
-# CONTRACT: Percentage is 0–100 inclusive. Fail closed; never clamp to 0 or 100.
+# CONTRACT: Percentage is 0–100 inclusive. Fail closed; never clamp to 0 or 100（PR #2）。
 Percentage = Annotated[int | float, Field(ge=0, le=100)]
 NonNegativeNumber = Annotated[int | float, Field(ge=0)]
 PositiveNumber = Annotated[int | float, Field(gt=0)]
@@ -60,13 +60,13 @@ class ContractModel(BaseModel):
     """Shared JSON-contract settings: reject extras, do not coerce types."""
 
     # SECURITY: extra="forbid" keeps provider-specific and credential-shaped
-    # keys out of the shared transport model.
+    # keys out of the shared transport model（PR #2）。
     model_config = ConfigDict(extra="forbid", frozen=True, strict=True)
 
 
 def _reject_explicit_null(value: object) -> object:
     # CONTRACT: Missing (omit) is not JSON null. Non-nullable optional fields
-    # must be omitted rather than set to null.
+    # must be omitted rather than set to null（PR #2）。
     if value is None:
         raise ValueError("null is not allowed; omit the field")
     return value
@@ -89,7 +89,7 @@ class ErrorSummary(ContractModel):
 class QuotaMeter(ContractModel):
     """Generic quota meter. remaining_percentage is required; 0 is valid."""
 
-    # CONTRACT: Omitting remaining_percentage is malformed; 0 means zero remaining.
+    # CONTRACT: Omitting remaining_percentage is malformed; 0 means zero remaining（PR #2）。
 
     id: MeterId
     label: MeterLabel
@@ -185,7 +185,7 @@ def parse_usage_snapshot(payload: object) -> UsageSnapshot:
     """Parse a snapshot mapping. Fail closed on malformed data."""
 
     # FALLBACK: Validation errors are raised as-is. Callers must not clamp
-    # percentages, invent zeros, or continue with a partial snapshot.
+    # percentages, invent zeros, or continue with a partial snapshot（PR #2）。
     return UsageSnapshot.model_validate(payload)
 
 

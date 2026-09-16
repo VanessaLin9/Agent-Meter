@@ -1,4 +1,4 @@
-"""JSON Schema 與 typed models 雙向 contract tests。
+"""JSON Schema 與 typed models 雙向 contract tests（PR #2）。
 
 Valid fixtures 必須被 Draft 2020-12 schema 與 Pydantic 同時接受並 round-trip。
 Invalid fixtures 必須被兩邊以 validation error 拒絕。兩邊判斷不一致時失敗。

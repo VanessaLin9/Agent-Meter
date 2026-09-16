@@ -4,7 +4,8 @@ version = "0.1.0"
 description = "Local Collector for Agent Meter usage snapshots."
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
-# FastAPI waits for the HTTP API task. jsonschema is test-only (dev group).
+# PR #1: M0 runtime deps 必須空白；Pydantic 留給 models，FastAPI 留給 API。
+# PR #2: Pydantic is the usage-model runtime dep. FastAPI still waits. jsonschema is test-only.
 dependencies = [
     "pydantic==2.13.5",
 ]

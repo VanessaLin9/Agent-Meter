@@ -1,6 +1,6 @@
-"""對已 commit 的 usage fixtures 做頂層欄位 smoke。
+"""對已 commit 的 usage fixtures 做頂層欄位 smoke（PR #1）。
 
-完整 Draft 2020-12 與 Pydantic 雙向驗證見 `test_usage_models.py`。
+完整 Draft 2020-12 與 Pydantic 雙向驗證見 `test_usage_models.py`（PR #2）。
 """
 
 from __future__ import annotations
