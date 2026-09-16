@@ -14,18 +14,44 @@ orchestrator, not this module.
 
 from __future__ import annotations
 
+import math
 from typing import Annotated, Any, Literal
 
 from pydantic import (
     BaseModel,
+    BeforeValidator,
     ConfigDict,
     Field,
     StringConstraints,
     field_validator,
 )
+from pydantic.json_schema import SkipJsonSchema
+
+# CONTRACT: GET /usage consumers and future FastAPI/OpenAPI must use this
+# committed schema, not UsageSnapshot.model_json_schema()（PR #2）。
+PUBLIC_USAGE_SCHEMA_ID = "https://agent-meter.local/schemas/usage-v0.1.schema.json"
+
+
+def _coerce_json_integer(value: object) -> object:
+    # CONTRACT: Draft 2020-12 integer accepts integer-valued JSON numbers
+    # such as 2000000000.0. Normalize to Python int; reject bool and
+    # non-integral floats（PR #2）。
+    if type(value) is bool:
+        raise ValueError("JSON boolean is not an integer")
+    if type(value) is int:
+        return value
+    if type(value) is float and math.isfinite(value) and value.is_integer():
+        return int(value)
+    return value
+
+
+def _drop_json_schema_default(schema: dict[str, Any]) -> None:
+    schema.pop("default", None)
+
 
 # CONTRACT: generated_at, collected_at, and reset_at are UTC Unix seconds（PR #2）。
-UnixSeconds = Annotated[int, Field(ge=0)]
+UnixSeconds = Annotated[int, BeforeValidator(_coerce_json_integer), Field(ge=0)]
+PositiveSeconds = Annotated[int, BeforeValidator(_coerce_json_integer), Field(ge=1)]
 # CONTRACT: Percentage is 0–100 inclusive. Fail closed; never clamp to 0 or 100（PR #2）。
 Percentage = Annotated[int | float, Field(ge=0, le=100)]
 NonNegativeNumber = Annotated[int | float, Field(ge=0)]
@@ -40,6 +66,21 @@ ErrorMessage = Annotated[
 ]
 ErrorCode = Annotated[
     str, StringConstraints(min_length=1, max_length=80, pattern=r"^[A-Za-z0-9_.:-]+$")
+]
+OptionalNonNegative = Annotated[
+    NonNegativeNumber | SkipJsonSchema[None], Field(json_schema_extra=_drop_json_schema_default)
+]
+OptionalPositive = Annotated[
+    PositiveNumber | SkipJsonSchema[None], Field(json_schema_extra=_drop_json_schema_default)
+]
+OptionalPercentage = Annotated[
+    Percentage | SkipJsonSchema[None], Field(json_schema_extra=_drop_json_schema_default)
+]
+OptionalCurrency = Annotated[
+    CurrencyCode | SkipJsonSchema[None], Field(json_schema_extra=_drop_json_schema_default)
+]
+OptionalErrorCode = Annotated[
+    ErrorCode | SkipJsonSchema[None], Field(json_schema_extra=_drop_json_schema_default)
 ]
 
 ErrorCategory = Literal[
@@ -57,7 +98,7 @@ ErrorCategory = Literal[
 
 
 class ContractModel(BaseModel):
-    """Shared JSON-contract settings: reject extras, do not coerce types."""
+    """Shared JSON-contract settings: reject extras, do not coerce strings."""
 
     # SECURITY: extra="forbid" keeps provider-specific and credential-shaped
     # keys out of the shared transport model（PR #2）。
@@ -78,7 +119,7 @@ class ErrorSummary(ContractModel):
     category: ErrorCategory
     message: ErrorMessage
     retryable: bool
-    code: ErrorCode | None = None
+    code: OptionalErrorCode = None
 
     @field_validator("code", mode="before")
     @classmethod
@@ -96,10 +137,10 @@ class QuotaMeter(ContractModel):
     kind: Literal["quota"]
     unit: Literal["percent", "currency", "requests", "tokens"]
     remaining_percentage: Percentage
-    used: NonNegativeNumber | None = None
-    limit: PositiveNumber | None = None
-    remaining: NonNegativeNumber | None = None
-    currency_code: CurrencyCode | None = None
+    used: OptionalNonNegative = None
+    limit: OptionalPositive = None
+    remaining: OptionalNonNegative = None
+    currency_code: OptionalCurrency = None
     reset_at: UnixSeconds | None = None
 
     @field_validator("used", "limit", "remaining", "currency_code", mode="before")
@@ -117,9 +158,9 @@ class SpendMeter(ContractModel):
     unit: Literal["currency"]
     used: NonNegativeNumber
     currency_code: CurrencyCode
-    remaining_percentage: Percentage | None = None
-    limit: PositiveNumber | None = None
-    remaining: NonNegativeNumber | None = None
+    remaining_percentage: OptionalPercentage = None
+    limit: OptionalPositive = None
+    remaining: OptionalNonNegative = None
     reset_at: UnixSeconds | None = None
 
     @field_validator("remaining_percentage", "limit", "remaining", mode="before")
@@ -135,7 +176,7 @@ class ProviderOk(ContractModel):
     status: Literal["ok"]
     source: SourceId
     collected_at: UnixSeconds
-    stale_after_seconds: Annotated[int, Field(ge=1)]
+    stale_after_seconds: PositiveSeconds
     meters: Annotated[list[Meter], Field(min_length=1, max_length=32)]
 
 
@@ -143,7 +184,7 @@ class ProviderStale(ContractModel):
     status: Literal["stale"]
     source: SourceId
     collected_at: UnixSeconds
-    stale_after_seconds: Annotated[int, Field(ge=1)]
+    stale_after_seconds: PositiveSeconds
     meters: Annotated[list[Meter], Field(min_length=1, max_length=32)]
     error: ErrorSummary
 
@@ -152,7 +193,7 @@ class ProviderUnavailable(ContractModel):
     status: Literal["unavailable"]
     source: SourceId
     collected_at: Literal[None]
-    stale_after_seconds: Annotated[int, Field(ge=1)]
+    stale_after_seconds: PositiveSeconds
     meters: Annotated[list[Meter], Field(max_length=0)]
     error: ErrorSummary
 
@@ -161,7 +202,7 @@ class ProviderError(ContractModel):
     status: Literal["error"]
     source: SourceId
     collected_at: Literal[None]
-    stale_after_seconds: Annotated[int, Field(ge=1)]
+    stale_after_seconds: PositiveSeconds
     meters: Annotated[list[Meter], Field(max_length=0)]
     error: ErrorSummary
 
