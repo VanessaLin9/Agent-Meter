@@ -45,4 +45,4 @@ provider transport -> adapter parser -> domain model <- API/cache/ESP32 contract
 8. Local/CI quality entrypoint：`/scripts/quality.sh`
 9. Foundation toolchain decision：`/docs/adr/0001-collector-python-foundation.md`
 
-Milestone 0 只有 package 骨架與品質工具。Adapter、normalizer、orchestrator、cache 與 HTTP API 尚未建立。各 component 的入口 module 必須連回相關 contract，並以 `CONTRACT:`、`SECURITY:`、`PROVIDER:`、`FALLBACK:` 標記不容易從 type system 看出的關鍵 invariant。
+Normalized usage models 與 schema validation 已落地於 `src/agent_meter/models.py`。Adapter、orchestrator、cache 與 HTTP API 尚未建立。各 component 的入口 module 必須連回相關 contract，並以 `CONTRACT:`、`SECURITY:`、`PROVIDER:`、`FALLBACK:` 標記不容易從 type system 看出的關鍵 invariant。

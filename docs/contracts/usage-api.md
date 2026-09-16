@@ -69,7 +69,9 @@ Spend meter：
 - 不得把缺失 percentage 轉成 0 或 100。
 - 不得 silently clamp 超出 0–100 的 percentage；應拒絕本次 provider result。
 - Cursor upstream milliseconds 必須在 adapter boundary 轉成 Unix seconds。
+- JSON Schema `integer` 依 Draft 2020-12：整數值 JSON number（例如 `2000000000.0`）合法。Runtime model 接受後正規化成 JSON integer；`2000000000.5` 這類非整數必須拒絕。
 - Currency value 的單位必須由 provider 文件明確定義；不得混用 cents 與 major currency units。
+- 對外 machine-readable contract 是 `schemas/usage-v0.1.schema.json`。`UsageSnapshot.model_json_schema()` 不是 GET /usage 或 OpenAPI contract。
 
 ## Freshness and fallback
 

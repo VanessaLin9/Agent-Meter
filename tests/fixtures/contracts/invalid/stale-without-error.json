@@ -1,0 +1,23 @@
+{
+  "schema_version": "0.1",
+  "generated_at": 2000000000,
+  "status": "partial",
+  "providers": {
+    "cursor": {
+      "status": "stale",
+      "source": "cursor_dashboard_connect_rpc",
+      "collected_at": 1999998000,
+      "stale_after_seconds": 900,
+      "meters": [
+        {
+          "id": "cursor_models",
+          "label": "Cursor Models",
+          "kind": "quota",
+          "unit": "percent",
+          "remaining_percentage": 36.55,
+          "reset_at": 2000600000
+        }
+      ]
+    }
+  }
+}

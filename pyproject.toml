@@ -5,7 +5,10 @@ description = "Local Collector for Agent Meter usage snapshots."
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 # PR #1: M0 runtime deps 必須空白；Pydantic 留給 models，FastAPI 留給 API。
-dependencies = []
+# PR #2: Pydantic is the usage-model runtime dep. FastAPI still waits. jsonschema is test-only.
+dependencies = [
+    "pydantic==2.13.5",
+]
 
 [build-system]
 # PR #1: Hatchling 精確版本寫在 build-system，不假設 uv.lock 鎖住隔離 build 工具。
@@ -14,9 +17,11 @@ build-backend = "hatchling.build"
 
 [dependency-groups]
 dev = [
+    "jsonschema==4.26.0",
     "mypy==2.3.1",
     "pytest==9.1.1",
     "ruff==0.16.7",
+    "types-jsonschema==4.26.0.20260518",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -42,6 +47,7 @@ known-first-party = ["agent_meter"]
 python_version = "3.12"
 strict = true
 files = ["src", "tests"]
+plugins = ["pydantic.mypy"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

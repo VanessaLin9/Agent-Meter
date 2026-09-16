@@ -1,0 +1,24 @@
+{
+  "schema_version": "0.1",
+  "generated_at": 2000000000,
+  "status": "ok",
+  "providers": {
+    "cursor": {
+      "status": "ok",
+      "source": "cursor_dashboard_connect_rpc",
+      "collected_at": 1999999970,
+      "stale_after_seconds": 900,
+      "meters": [
+        {
+          "id": "on_demand",
+          "label": "On-demand",
+          "kind": "spend",
+          "unit": "percent",
+          "used": 4.5,
+          "currency_code": "USD",
+          "reset_at": 2000600000
+        }
+      ]
+    }
+  }
+}

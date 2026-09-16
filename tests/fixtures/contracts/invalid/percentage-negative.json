@@ -1,0 +1,23 @@
+{
+  "schema_version": "0.1",
+  "generated_at": 2000000000,
+  "status": "ok",
+  "providers": {
+    "codex": {
+      "status": "ok",
+      "source": "codex_app_server",
+      "collected_at": 1999999980,
+      "stale_after_seconds": 600,
+      "meters": [
+        {
+          "id": "weekly",
+          "label": "Weekly",
+          "kind": "quota",
+          "unit": "percent",
+          "remaining_percentage": -1,
+          "reset_at": 2000600000
+        }
+      ]
+    }
+  }
+}
