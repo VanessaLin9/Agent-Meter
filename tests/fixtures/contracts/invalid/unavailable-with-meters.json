@@ -1,0 +1,28 @@
+{
+  "schema_version": "0.1",
+  "generated_at": 2000000000,
+  "status": "error",
+  "providers": {
+    "claude": {
+      "status": "unavailable",
+      "source": "claude_statusline",
+      "collected_at": null,
+      "stale_after_seconds": 900,
+      "meters": [
+        {
+          "id": "weekly",
+          "label": "Weekly",
+          "kind": "quota",
+          "unit": "percent",
+          "remaining_percentage": 58.8,
+          "reset_at": 2000600400
+        }
+      ],
+      "error": {
+        "category": "not_authenticated",
+        "message": "Claude Code session is unavailable",
+        "retryable": false
+      }
+    }
+  }
+}

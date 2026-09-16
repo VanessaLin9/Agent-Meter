@@ -12,7 +12,7 @@ Repository 只保存程式碼、測試、執行文件，以及實作所需的 AP
 
 ## Collector development
 
-Milestone 0 目前只有 package 骨架與品質檢查，還沒有 provider adapter、HTTP API 或 cache。
+Normalized usage models 與 schema validation 已落地。還沒有 provider adapter、HTTP API 或 cache。
 
 Required local toolchain:
 

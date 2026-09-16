@@ -1,6 +1,6 @@
-"""對已 commit 的 usage fixtures 做頂層欄位 smoke（PR #1）。
+"""對已 commit 的 usage fixtures 做頂層欄位 smoke。
 
-這不是 JSON Schema validation；`invalid/` 與 Draft 2020-12 validator 留給 models task。
+完整 Draft 2020-12 與 Pydantic 雙向驗證見 `test_usage_models.py`。
 """
 
 from __future__ import annotations
@@ -10,14 +10,17 @@ from pathlib import Path
 from typing import Any
 
 FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures" / "contracts"
-REQUIRED_FIXTURES = ("ok.json", "partial.json", "error.json")
 REQUIRED_TOP_LEVEL_KEYS = ("schema_version", "generated_at", "status", "providers")
 
 
+def _valid_fixture_paths() -> list[Path]:
+    return sorted(path for path in FIXTURE_DIR.glob("*.json") if path.is_file())
+
+
 def test_committed_usage_fixtures_exist_and_have_top_level_keys() -> None:
-    paths = [FIXTURE_DIR / name for name in REQUIRED_FIXTURES]
-    missing = [path.name for path in paths if not path.is_file()]
-    assert missing == []
+    paths = _valid_fixture_paths()
+    names = {path.name for path in paths}
+    assert {"ok.json", "partial.json", "error.json", "ok-with-spend.json"} <= names
 
     snapshots: list[dict[str, Any]] = []
     for path in paths:
