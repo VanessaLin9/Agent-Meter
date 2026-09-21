@@ -1,4 +1,4 @@
-"""Freshness and stale-threshold policy.
+"""Freshness and stale-threshold policy（PR #3）。
 
 Responsibility: decide whether last-good provider data is still fresh using an
 injected clock and configurable thresholds. Non-goals: adapter transport,
@@ -20,8 +20,7 @@ from typing import Protocol
 
 from agent_meter.models import ErrorSummary, ProviderOk, ProviderSnapshot, ProviderStale
 
-# CONTRACT: Default lives in settings, never in a provider adapter（task: status
-# aggregation / cache stale policy）.
+# CONTRACT: Default lives in settings, never in a provider adapter（PR #3）。
 DEFAULT_STALE_AFTER_SECONDS = 900
 
 THRESHOLD_STALE_ERROR = ErrorSummary(
@@ -75,9 +74,8 @@ def is_fresh(*, collected_at: int | None, stale_after_seconds: int, now: int) ->
         return False
     if stale_after_seconds < 1:
         raise ValueError("stale_after_seconds must be >= 1")
-    # CONTRACT: stale when now >= collected_at + stale_after_seconds.
-    # FALLBACK: now < collected_at (clock going backwards) has not aged, so
-    # the snapshot stays fresh instead of flipping to stale.
+    # CONTRACT: stale when now >= collected_at + stale_after_seconds（PR #3）。
+    # FALLBACK: now < collected_at（時鐘倒退）尚未過期，維持 fresh，避免誤標 stale（PR #3）。
     return now < collected_at + stale_after_seconds
 
 
@@ -85,6 +83,8 @@ def evaluate_provider(snapshot: ProviderSnapshot, *, now: int) -> ProviderSnapsh
     """Recompute age-based stale on last-good data. Do not invent meters."""
 
     if not isinstance(snapshot, ProviderOk):
+        # CONTRACT: refresh-failed stale / unavailable / error 不因仍在 threshold
+        # 內被升回 ok；只有新的 success 才能恢復 ok（PR #3）。
         return snapshot
     if is_fresh(
         collected_at=snapshot.collected_at,
@@ -92,8 +92,8 @@ def evaluate_provider(snapshot: ProviderSnapshot, *, now: int) -> ProviderSnapsh
         now=now,
     ):
         return snapshot
-    # FALLBACK: keep original meters and collected_at; only the status and a
-    # sanitized cache error change when the threshold is crossed.
+    # FALLBACK: 過期只改 status 與 sanitized cache error，保留原 meters 與
+    # collected_at，避免用空值覆蓋 last-good（PR #3）。
     return ProviderStale(
         status="stale",
         source=snapshot.source,

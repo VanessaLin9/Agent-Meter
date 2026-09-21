@@ -1,4 +1,4 @@
-"""Last-valid snapshot cache envelope and last-good merge policy.
+"""Last-valid snapshot cache envelope and last-good merge policy（PR #3）。
 
 Responsibility: define the in-memory cache envelope and how new collection
 results replace or keep last-good provider data. Non-goals: atomic file write,
@@ -35,8 +35,8 @@ from agent_meter.models import (
     parse_usage_snapshot,
 )
 
-# SECURITY: Never stringify ValidationError or raw payload into last_error;
-# pydantic errors can echo rejected input, including planted secrets.
+# SECURITY: 不得把 ValidationError 或 raw payload 字串化進 last_error；
+# pydantic 錯誤可能回顯被拒絕的 input，包含 planted secret（PR #3）。
 MALFORMED_SNAPSHOT_ERROR = ErrorSummary(
     category="malformed_response",
     message="Rejected malformed snapshot",
@@ -48,9 +48,9 @@ MALFORMED_PROVIDER_ERROR = ErrorSummary(
     retryable=False,
 )
 
-# CONTRACT: Adapter failure categories do not choose stale vs error. No
-# last-good plus an unusable provider → unavailable; no last-good plus an
-# execution failure → error; any failure with last-good → stale.
+# CONTRACT: Adapter failure 不直接決定 stale／error。無 last-good 且
+# provider 不可用 → unavailable；無 last-good 且執行失敗 → error；
+# 任何失敗只要有 last-good → stale（PR #3）。
 _UNAVAILABLE_WITHOUT_LAST_GOOD: frozenset[ErrorCategory] = frozenset(
     {
         "not_configured",
@@ -64,8 +64,8 @@ _UNAVAILABLE_WITHOUT_LAST_GOOD: frozenset[ErrorCategory] = frozenset(
 class CacheEnvelope(ContractModel):
     """Last schema-valid snapshot plus sanitized apply metadata. No I/O."""
 
-    # SECURITY: extra="forbid" on ContractModel; never add raw_response,
-    # headers, or credential fields to this envelope.
+    # SECURITY: extra="forbid"；envelope 不得新增 raw_response、headers
+    # 或 credential 欄位（PR #3）。
     snapshot: UsageSnapshot | None = None
     last_error: ErrorSummary | None = None
 
@@ -98,8 +98,7 @@ def apply_snapshot_payload(envelope: CacheEnvelope, payload: object) -> CacheEnv
     try:
         snapshot = parse_usage_snapshot(payload)
     except ValidationError:
-        # FALLBACK: malformed payload never overwrites last-valid data and never
-        # invents meters.
+        # FALLBACK: malformed payload 不覆蓋 last-valid，也不發明 meters（PR #3）。
         return CacheEnvelope(snapshot=envelope.snapshot, last_error=MALFORMED_SNAPSHOT_ERROR)
     return CacheEnvelope(snapshot=snapshot, last_error=None)
 
@@ -133,8 +132,7 @@ def apply_collection_result(
     last_good = _last_good(previous)
     if last_good is not None:
         source, collected_at, stale_after_seconds, meters = last_good
-        # FALLBACK: keep original meters and collected_at; never cover last-good
-        # with an empty meter list.
+        # FALLBACK: 保留原 meters 與 collected_at；不得用空 meter 覆蓋 last-good（PR #3）。
         return ProviderStale(
             status="stale",
             source=source,

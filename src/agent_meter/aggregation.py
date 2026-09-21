@@ -1,4 +1,4 @@
-"""Top-level usage status aggregation.
+"""Top-level usage status aggregation（PR #3）。
 
 Responsibility: fold per-provider statuses into snapshot `ok` / `partial` /
 `error`, after freshness has been recomputed. Non-goals: provider I/O,
@@ -29,15 +29,14 @@ _DISPLAYABLE: frozenset[ProviderStatus] = frozenset({"ok", "stale"})
 def aggregate_status(statuses: Mapping[str, ProviderStatus]) -> TopLevelStatus:
     """Aggregate configured provider statuses into a top-level snapshot status."""
 
-    # CONTRACT: empty configured set has no displayable data → error, never a
-    # fabricated ok snapshot.
+    # CONTRACT: 沒有已設定 provider 就沒有可顯示資料 → error，不得虛構 ok（PR #3）。
     if not statuses:
         return "error"
     values = list(statuses.values())
     if not any(status in _DISPLAYABLE for status in values):
         return "error"
-    # CONTRACT: ok only when every configured provider is still ok (fresh).
-    # All-stale is displayable last-good data, so partial rather than error.
+    # CONTRACT: ok 只在每個 configured provider 都仍是 ok（fresh）。
+    # 全 stale 仍有 last-good 可顯示，因此是 partial 不是 error（PR #3）。
     if all(status == "ok" for status in values):
         return "ok"
     return "partial"
