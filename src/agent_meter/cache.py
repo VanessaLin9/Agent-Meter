@@ -15,7 +15,7 @@ and retry; this module never touches the filesystem.
 from __future__ import annotations
 
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 
 from pydantic import ValidationError
@@ -49,6 +49,7 @@ MALFORMED_PROVIDER_ERROR = ErrorSummary(
     retryable=False,
 )
 _SOURCE_ID_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,79}$")
+_PROVIDER_ID_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
 _MALFORMED_SOURCE = "malformed_result"
 
 # CONTRACT: Adapter failure 不直接決定 stale／error。無 last-good 且
@@ -124,9 +125,9 @@ def apply_collection_result(
 
     try:
         return _apply_collection_result(previous, result, settings=settings)
-    except ValidationError:
-        # FALLBACK: ProviderOk／ErrorSummary 建構失敗不得逃出單一 provider，
-        # 否則 merge 會中斷、其他 provider 也無法套用 last-good（PR #3）。
+    except (ValidationError, TypeError):
+        # FALLBACK: ProviderOk／ErrorSummary 建構失敗、或 meters 容器不可迭代，
+        # 都不得逃出單一 provider，否則 merge 會中斷（PR #3）。
         return _malformed_provider_snapshot(previous, result, settings=settings)
 
 
@@ -137,16 +138,18 @@ def _apply_collection_result(
     settings: StaleSettings,
 ) -> ProviderSnapshot:
 
-    if isinstance(result, ProviderCollectionSuccess) and result.meters:
-        return ProviderOk.model_validate(
-            {
-                "status": "ok",
-                "source": result.source,
-                "collected_at": result.collected_at,
-                "stale_after_seconds": settings.for_provider(result.provider_id),
-                "meters": [_meter_payload(meter) for meter in result.meters],
-            }
-        )
+    if isinstance(result, ProviderCollectionSuccess):
+        meter_items = _coerce_meters(result.meters)
+        if meter_items:
+            return ProviderOk.model_validate(
+                {
+                    "status": "ok",
+                    "source": result.source,
+                    "collected_at": result.collected_at,
+                    "stale_after_seconds": settings.for_provider(result.provider_id),
+                    "meters": [_meter_payload(meter) for meter in meter_items],
+                }
+            )
 
     error = _error_from_result(result)
     last_good = _last_good(previous)
@@ -192,6 +195,10 @@ def merge_collection_results(
 
     merged = dict(previous)
     for result in results:
+        if not _is_assignable_provider_id(result.provider_id):
+            # FALLBACK: 無法寫進 snapshot map 的 provider_id 整筆拒絕，
+            # 不插入壞 key，也不改其他 provider（PR #3）。
+            continue
         merged[result.provider_id] = apply_collection_result(
             merged.get(result.provider_id),
             result,
@@ -266,7 +273,18 @@ def _safe_source(source: str) -> str:
     return _MALFORMED_SOURCE
 
 
-def _meter_payload(meter: Meter) -> object:
+def _is_assignable_provider_id(provider_id: object) -> bool:
+    return isinstance(provider_id, str) and _PROVIDER_ID_PATTERN.fullmatch(provider_id) is not None
+
+
+def _coerce_meters(meters: object) -> tuple[object, ...] | None:
+    # CONTRACT: meters 必須是可迭代容器；int／str 不可當成 meter list（PR #3）。
+    if isinstance(meters, (str, bytes)) or not isinstance(meters, Iterable):
+        return None
+    return tuple(meters)
+
+
+def _meter_payload(meter: object) -> object:
     # CONTRACT: 已建構的 Meter 實例（含 model_construct）必須再走 schema
     # validation，否則 remaining_percentage=101 會直接進 ProviderOk（PR #3）。
     if isinstance(meter, ContractModel):
