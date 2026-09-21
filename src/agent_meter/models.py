@@ -8,8 +8,9 @@ Inputs: JSON-like mappings. Units are UTC Unix seconds and remaining
 percentage 0–100. Outputs: immutable UsageSnapshot or ValidationError.
 
 Contract: `docs/contracts/usage-api.md` and
-`schemas/usage-v0.1.schema.json`. Retry, cache, and fallback belong to the
-orchestrator, not this module.
+`schemas/usage-v0.1.schema.json`. Retry and cache I/O belong to the
+orchestrator. Aggregation, freshness, and last-good merge live in
+`freshness.py`, `aggregation.py`, and `cache.py`.
 """
 
 from __future__ import annotations

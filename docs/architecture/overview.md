@@ -28,8 +28,9 @@ provider transport -> adapter parser -> domain model <- API/cache/ESP32 contract
 
 - **Adapter**：provider discovery、read-only auth access、transport、raw validation、欄位／單位轉換。
 - **Normalizer/domain**：共用 types、range validation、status 與 meter semantics。
-- **Orchestrator**：refresh scheduling、timeout、typed failure mapping、last-good fallback、aggregation。
-- **Cache**：atomic persistence 與 restart recovery；不保存 credential 或 raw response。
+- **Domain policy**：top-level aggregation、freshness/stale threshold、last-good merge；純函式，沒有 I/O。見 `src/agent_meter/freshness.py`、`aggregation.py`、`cache.py`。
+- **Orchestrator**：refresh scheduling、timeout、呼叫 domain policy、寫 cache。
+- **Cache**：atomic persistence 與 restart recovery；envelope 由 domain policy 定義，不保存 credential 或 raw response。
 - **HTTP API**：提供 schema-valid snapshot 與 health；不主動 refresh provider。
 - **ESP32**：poll、bounded parse、render、offline recovery。
 
@@ -45,4 +46,4 @@ provider transport -> adapter parser -> domain model <- API/cache/ESP32 contract
 8. Local/CI quality entrypoint：`/scripts/quality.sh`
 9. Foundation toolchain decision：`/docs/adr/0001-collector-python-foundation.md`
 
-Normalized usage models 與 schema validation 已落地於 `src/agent_meter/models.py`。Adapter、orchestrator、cache 與 HTTP API 尚未建立。各 component 的入口 module 必須連回相關 contract，並以 `CONTRACT:`、`SECURITY:`、`PROVIDER:`、`FALLBACK:` 標記不容易從 type system 看出的關鍵 invariant。
+Normalized usage models 在 `src/agent_meter/models.py`。Aggregation、stale 與 cache envelope 在 `freshness.py`、`aggregation.py`、`cache.py`。Adapter、orchestrator I/O、HTTP API 尚未建立。各 component 的入口 module 必須連回相關 contract，並以 `CONTRACT:`、`SECURITY:`、`PROVIDER:`、`FALLBACK:` 標記不容易從 type system 看出的關鍵 invariant。
