@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Protocol
 
 from agent_meter.models import ErrorSummary, ProviderOk, ProviderSnapshot, ProviderStale
@@ -56,15 +57,30 @@ class StaleSettings:
     overrides: Mapping[str, int] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        if self.default_stale_after_seconds < 1:
-            raise ValueError("default_stale_after_seconds must be >= 1")
-        object.__setattr__(self, "overrides", dict(self.overrides))
+        object.__setattr__(
+            self,
+            "default_stale_after_seconds",
+            _require_positive_int(self.default_stale_after_seconds, "default_stale_after_seconds"),
+        )
+        frozen: dict[str, int] = {}
         for provider_id, value in self.overrides.items():
-            if value < 1:
-                raise ValueError(f"stale_after_seconds for {provider_id} must be >= 1")
+            frozen[provider_id] = _require_positive_int(
+                value, f"stale_after_seconds for {provider_id}"
+            )
+        # CONTRACT: overrides 必須是不可變 mapping，避免 frozen dataclass
+        # 驗證後還能被改成 0（PR #3）。
+        object.__setattr__(self, "overrides", MappingProxyType(frozen))
 
     def for_provider(self, provider_id: str) -> int:
         return self.overrides.get(provider_id, self.default_stale_after_seconds)
+
+
+def _require_positive_int(value: object, name: str) -> int:
+    # CONTRACT: bool 是 int 子類別，1.5 也會通過 `>= 1`；threshold 只接受
+    # 嚴格的正整數（PR #3）。
+    if type(value) is not int or value < 1:
+        raise ValueError(f"{name} must be a positive int")
+    return value
 
 
 def is_fresh(*, collected_at: int | None, stale_after_seconds: int, now: int) -> bool:
@@ -72,8 +88,7 @@ def is_fresh(*, collected_at: int | None, stale_after_seconds: int, now: int) ->
 
     if collected_at is None:
         return False
-    if stale_after_seconds < 1:
-        raise ValueError("stale_after_seconds must be >= 1")
+    _require_positive_int(stale_after_seconds, "stale_after_seconds")
     # CONTRACT: stale when now >= collected_at + stale_after_seconds（PR #3）。
     # FALLBACK: now < collected_at（時鐘倒退）尚未過期，維持 fresh，避免誤標 stale（PR #3）。
     return now < collected_at + stale_after_seconds

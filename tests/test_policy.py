@@ -141,6 +141,26 @@ def test_threshold_must_be_at_least_one_second() -> None:
         is_fresh(collected_at=NOW, stale_after_seconds=0, now=NOW)
 
 
+def test_stale_settings_rejects_non_integer_thresholds() -> None:
+    with pytest.raises(ValueError, match="default_stale_after_seconds"):
+        StaleSettings(default_stale_after_seconds=1.5)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="default_stale_after_seconds"):
+        StaleSettings(default_stale_after_seconds=True)
+    with pytest.raises(ValueError, match="codex"):
+        StaleSettings(overrides={"codex": 1.5})  # type: ignore[dict-item]
+    with pytest.raises(ValueError, match="cursor"):
+        StaleSettings(overrides={"cursor": True})
+    with pytest.raises(ValueError, match="stale_after_seconds"):
+        is_fresh(collected_at=NOW, stale_after_seconds=True, now=NOW)
+
+
+def test_stale_settings_overrides_are_immutable() -> None:
+    settings = StaleSettings(overrides={"codex": 600})
+    with pytest.raises(TypeError):
+        settings.overrides["codex"] = 0  # type: ignore[index]
+    assert settings.for_provider("codex") == 600
+
+
 def test_fresh_inside_window_stale_at_and_after_boundary() -> None:
     collected_at = NOW
     stale_after = 600
@@ -376,6 +396,120 @@ def test_empty_success_meters_do_not_overwrite_last_good() -> None:
     assert snapshot.meters == previous.meters
     assert snapshot.collected_at == previous.collected_at
     assert snapshot.error == MALFORMED_PROVIDER_ERROR
+
+
+def test_invalid_success_fields_keep_last_good_instead_of_raising() -> None:
+    previous = _ok(remaining_percentage=40)
+    invalid_meter = QuotaMeter.model_construct(
+        id="weekly",
+        label="Weekly",
+        kind="quota",
+        unit="percent",
+        remaining_percentage=101,
+    )
+    cases: list[ProviderCollectionSuccess] = [
+        ProviderCollectionSuccess(
+            provider_id="codex",
+            source="Codex",
+            collected_at=NOW,
+            meters=(_quota(),),
+        ),
+        ProviderCollectionSuccess(
+            provider_id="codex",
+            source="codex_app_server",
+            collected_at=-1,
+            meters=(_quota(),),
+        ),
+        ProviderCollectionSuccess(
+            provider_id="codex",
+            source="codex_app_server",
+            collected_at=NOW,
+            meters=(invalid_meter,),
+        ),
+    ]
+    for result in cases:
+        snapshot = apply_collection_result(previous, result, settings=StaleSettings())
+        assert isinstance(snapshot, ProviderStale), result
+        assert snapshot.meters == previous.meters
+        assert snapshot.collected_at == previous.collected_at
+        assert snapshot.error == MALFORMED_PROVIDER_ERROR
+
+
+def test_invalid_failure_fields_keep_last_good_instead_of_raising() -> None:
+    previous = _ok(remaining_percentage=40)
+    cases: list[ProviderCollectionFailure] = [
+        ProviderCollectionFailure(
+            provider_id="codex",
+            source="codex_app_server",
+            category="timeout",
+            message="line1\nline2",
+            retryable=True,
+        ),
+        ProviderCollectionFailure(
+            provider_id="codex",
+            source="codex_app_server",
+            category="timeout",
+            message="Codex rate-limit read timed out",
+            retryable=True,
+            code="bad code",
+        ),
+    ]
+    for result in cases:
+        snapshot = apply_collection_result(previous, result, settings=StaleSettings())
+        assert isinstance(snapshot, ProviderStale), result
+        assert snapshot.meters == previous.meters
+        assert snapshot.error == MALFORMED_PROVIDER_ERROR
+
+
+def test_invalid_result_without_last_good_is_error_not_exception() -> None:
+    snapshot = apply_collection_result(
+        None,
+        ProviderCollectionSuccess(
+            provider_id="codex",
+            source="Not A Source",
+            collected_at=-5,
+            meters=(_quota(),),
+        ),
+        settings=StaleSettings(),
+    )
+    assert isinstance(snapshot, ProviderError)
+    assert snapshot.meters == []
+    assert snapshot.collected_at is None
+    assert snapshot.error == MALFORMED_PROVIDER_ERROR
+    assert snapshot.source == "malformed_result"
+
+
+def test_malformed_provider_does_not_abort_other_providers_in_merge() -> None:
+    previous = {
+        "codex": _ok(remaining_percentage=82),
+        "cursor": _ok(
+            source="cursor_dashboard_connect_rpc",
+            remaining_percentage=36.55,
+        ),
+    }
+    merged = merge_collection_results(
+        previous,
+        [
+            ProviderCollectionSuccess(
+                provider_id="cursor",
+                source="Cursor",
+                collected_at=NOW,
+                meters=(_quota(),),
+            ),
+            ProviderCollectionSuccess(
+                provider_id="codex",
+                source="codex_app_server",
+                collected_at=NOW,
+                meters=(_quota(remaining_percentage=70),),
+            ),
+        ],
+        settings=StaleSettings(),
+    )
+    assert isinstance(merged["codex"], ProviderOk)
+    assert merged["codex"].meters[0].remaining_percentage == 70
+    assert isinstance(merged["cursor"], ProviderStale)
+    assert merged["cursor"].meters == previous["cursor"].meters
+    assert merged["cursor"].error == MALFORMED_PROVIDER_ERROR
 
 
 def test_failure_without_last_good_is_error_or_unavailable() -> None:
