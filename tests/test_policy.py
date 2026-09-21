@@ -512,6 +512,75 @@ def test_malformed_provider_does_not_abort_other_providers_in_merge() -> None:
     assert merged["cursor"].error == MALFORMED_PROVIDER_ERROR
 
 
+def test_non_iterable_meters_keep_last_good_and_do_not_abort_merge() -> None:
+    previous = {
+        "codex": _ok(remaining_percentage=82),
+        "cursor": _ok(
+            source="cursor_dashboard_connect_rpc",
+            remaining_percentage=36.55,
+        ),
+    }
+    merged = merge_collection_results(
+        previous,
+        [
+            ProviderCollectionSuccess(
+                provider_id="cursor",
+                source="cursor_dashboard_connect_rpc",
+                collected_at=NOW,
+                meters=1,  # type: ignore[arg-type]
+            ),
+            ProviderCollectionSuccess(
+                provider_id="codex",
+                source="codex_app_server",
+                collected_at=NOW,
+                meters=(_quota(remaining_percentage=70),),
+            ),
+        ],
+        settings=StaleSettings(),
+    )
+    assert isinstance(merged["codex"], ProviderOk)
+    assert merged["codex"].meters[0].remaining_percentage == 70
+    assert isinstance(merged["cursor"], ProviderStale)
+    assert merged["cursor"].meters == previous["cursor"].meters
+    assert merged["cursor"].error == MALFORMED_PROVIDER_ERROR
+    snapshot = build_snapshot(merged, now=NOW)
+    assert snapshot.status == "partial"
+
+
+def test_invalid_provider_id_is_rejected_without_changing_previous_map() -> None:
+    previous = {
+        "codex": _ok(remaining_percentage=82),
+        "cursor": _ok(
+            source="cursor_dashboard_connect_rpc",
+            remaining_percentage=36.55,
+        ),
+    }
+    merged = merge_collection_results(
+        previous,
+        [
+            ProviderCollectionSuccess(
+                provider_id="Bad Provider",
+                source="codex_app_server",
+                collected_at=NOW,
+                meters=(_quota(),),
+            ),
+            ProviderCollectionSuccess(
+                provider_id="codex",
+                source="codex_app_server",
+                collected_at=NOW,
+                meters=(_quota(remaining_percentage=70),),
+            ),
+        ],
+        settings=StaleSettings(),
+    )
+    assert "Bad Provider" not in merged
+    assert merged["cursor"] == previous["cursor"]
+    assert isinstance(merged["codex"], ProviderOk)
+    assert merged["codex"].meters[0].remaining_percentage == 70
+    snapshot = build_snapshot(merged, now=NOW)
+    assert snapshot.status == "ok"
+
+
 def test_failure_without_last_good_is_error_or_unavailable() -> None:
     settings = StaleSettings()
     timeout = apply_collection_result(
