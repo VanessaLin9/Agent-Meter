@@ -14,6 +14,7 @@ and retry; this module never touches the filesystem.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
@@ -47,6 +48,8 @@ MALFORMED_PROVIDER_ERROR = ErrorSummary(
     message="Rejected malformed provider result",
     retryable=False,
 )
+_SOURCE_ID_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,79}$")
+_MALFORMED_SOURCE = "malformed_result"
 
 # CONTRACT: Adapter failure 不直接決定 stale／error。無 last-good 且
 # provider 不可用 → unavailable；無 last-good 且執行失敗 → error；
@@ -119,13 +122,30 @@ def apply_collection_result(
 ) -> ProviderSnapshot:
     """Merge one provider result with last-good data. Other providers are untouched."""
 
+    try:
+        return _apply_collection_result(previous, result, settings=settings)
+    except ValidationError:
+        # FALLBACK: ProviderOk／ErrorSummary 建構失敗不得逃出單一 provider，
+        # 否則 merge 會中斷、其他 provider 也無法套用 last-good（PR #3）。
+        return _malformed_provider_snapshot(previous, result, settings=settings)
+
+
+def _apply_collection_result(
+    previous: ProviderSnapshot | None,
+    result: ProviderCollectionSuccess | ProviderCollectionFailure,
+    *,
+    settings: StaleSettings,
+) -> ProviderSnapshot:
+
     if isinstance(result, ProviderCollectionSuccess) and result.meters:
-        return ProviderOk(
-            status="ok",
-            source=result.source,
-            collected_at=result.collected_at,
-            stale_after_seconds=settings.for_provider(result.provider_id),
-            meters=list(result.meters),
+        return ProviderOk.model_validate(
+            {
+                "status": "ok",
+                "source": result.source,
+                "collected_at": result.collected_at,
+                "stale_after_seconds": settings.for_provider(result.provider_id),
+                "meters": [_meter_payload(meter) for meter in result.meters],
+            }
         )
 
     error = _error_from_result(result)
@@ -211,3 +231,44 @@ def _last_good(
             list(snapshot.meters),
         )
     return None
+
+
+def _malformed_provider_snapshot(
+    previous: ProviderSnapshot | None,
+    result: ProviderCollectionSuccess | ProviderCollectionFailure,
+    *,
+    settings: StaleSettings,
+) -> ProviderSnapshot:
+    last_good = _last_good(previous)
+    if last_good is not None:
+        source, collected_at, stale_after_seconds, meters = last_good
+        return ProviderStale(
+            status="stale",
+            source=source,
+            collected_at=collected_at,
+            stale_after_seconds=stale_after_seconds,
+            meters=meters,
+            error=MALFORMED_PROVIDER_ERROR,
+        )
+    return ProviderError(
+        status="error",
+        source=_safe_source(result.source),
+        collected_at=None,
+        stale_after_seconds=settings.for_provider(result.provider_id),
+        meters=[],
+        error=MALFORMED_PROVIDER_ERROR,
+    )
+
+
+def _safe_source(source: str) -> str:
+    if isinstance(source, str) and _SOURCE_ID_PATTERN.fullmatch(source):
+        return source
+    return _MALFORMED_SOURCE
+
+
+def _meter_payload(meter: Meter) -> object:
+    # CONTRACT: 已建構的 Meter 實例（含 model_construct）必須再走 schema
+    # validation，否則 remaining_percentage=101 會直接進 ProviderOk（PR #3）。
+    if isinstance(meter, ContractModel):
+        return meter.model_dump(mode="python", exclude_none=True)
+    return meter
