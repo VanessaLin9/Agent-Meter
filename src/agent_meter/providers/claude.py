@@ -1,8 +1,9 @@
-"""Claude Code structured status-line adapter.
+"""Claude Code structured status-line adapter（PR #4）。
 
 Responsibility: parse Claude Code status-line stdin JSON into typed collection
 results. Non-goals: Claude login, Anthropic API calls, Collector scheduling,
-or writing last-good cache.
+or writing last-good cache. This CLI is a Collector parser, not the visible
+Claude Code status line.
 
 Inputs: a single JSON object from status-line stdin. Units are used percentage
 0–100 and `resets_at` UTC Unix seconds. Outputs: ProviderCollectionSuccess
@@ -28,7 +29,7 @@ CLAUDE_SOURCE = "claude_statusline"
 DEFAULT_MAX_STDIN_BYTES = 1_048_576
 
 # PROVIDER: Claude Code documents five_hour + seven_day windows; normalized
-# weekly meter id stays `weekly` to match the usage snapshot fixtures.
+# weekly meter id stays `weekly` to match the usage snapshot fixtures（PR #4）。
 _WINDOWS: tuple[tuple[str, str, str], ...] = (
     ("five_hour", "five_hour", "5 hour"),
     ("seven_day", "weekly", "Weekly"),
@@ -54,7 +55,7 @@ def collect_statusline(
         return _failure("not_object")
     if "rate_limits" not in payload or payload["rate_limits"] is None:
         # PROVIDER: rate_limits is omitted or null until a session has a fresh
-        # API response, and may stay missing on some accounts.
+        # API response, and may stay missing on some accounts（PR #4）。
         return _failure("missing_rate_limits")
     rate_limits = payload["rate_limits"]
     if not isinstance(rate_limits, dict):
@@ -67,7 +68,7 @@ def collect_statusline(
             meters.append(meter)
     if not meters:
         # FALLBACK: do not invent 0%/100% when every window is absent or
-        # malformed. Orchestrator keeps last-good data if it has any.
+        # malformed. Orchestrator keeps last-good data if it has any（PR #4）。
         return _failure("no_valid_meters")
     return ProviderCollectionSuccess(
         provider_id=CLAUDE_PROVIDER_ID,
@@ -99,7 +100,7 @@ def ingest(
     """Read stdin, write one JSON result to stdout, diagnostics to stderr."""
 
     # CONTRACT: stdout is the machine-readable channel. Human diagnostics
-    # stay on stderr even when the typed result is a failure.
+    # stay on stderr even when the typed result is a failure（PR #4）。
     raw = stdin.read(max_bytes + 1)
     if len(raw) > max_bytes:
         result: ProviderCollectionSuccess | ProviderCollectionFailure = _failure("input_too_large")
@@ -121,7 +122,7 @@ def dump_collection_result(
     """Serialize a typed result without copying unknown upstream fields."""
 
     # SECURITY: dump only normalized fields. Status-line extras such as
-    # account, session, and transcript path must never appear here.
+    # account, session, and transcript path must never appear here（PR #4）。
     if isinstance(result, ProviderCollectionSuccess):
         return {
             "result": "success",
@@ -156,7 +157,7 @@ def _decode_json_object(raw: bytes) -> object | ProviderCollectionFailure:
         text = raw.decode("utf-8")
     except UnicodeDecodeError:
         # SECURITY: do not include undecodable bytes or JSONDecodeError
-        # snippets; they can echo planted secrets from malformed input.
+        # snippets; they can echo planted secrets from malformed input（PR #4）。
         return _failure("malformed_json")
     stripped = text.strip()
     if not stripped:
@@ -178,7 +179,7 @@ def _parse_window(window: object, *, meter_id: str, label: str) -> QuotaMeter | 
     remaining = _remaining_percentage(window.get("used_percentage"))
     if remaining is None:
         # CONTRACT: missing, non-numeric, or out-of-range used_percentage is
-        # skipped, never clamped to 0 or 100.
+        # skipped, never clamped to 0 or 100（PR #4）。
         return None
     meter_kwargs: dict[str, object] = {
         "id": meter_id,
@@ -209,7 +210,7 @@ def _remaining_percentage(used: object) -> int | float | None:
 
 def _unix_seconds(value: object) -> int | None:
     # PROVIDER: Claude Code documents resets_at as UTC Unix seconds. Invalid
-    # or missing values omit reset_at; they do not reject a valid percentage.
+    # or missing values omit reset_at; they do not reject a valid percentage（PR #4）。
     if value is None or type(value) is bool:
         return None
     if type(value) is int:
