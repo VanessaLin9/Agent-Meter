@@ -12,7 +12,13 @@ Repository 只保存程式碼、測試、執行文件，以及實作所需的 AP
 
 ## Collector development
 
-Normalized usage models 與 schema validation 已落地。還沒有 provider adapter、HTTP API 或 cache。
+Normalized usage models、aggregation／stale policy 與 Claude Code status-line adapter 已落地。還沒有 Collector HTTP API 或 cache I/O。
+
+Claude ingest（stdin JSON → typed meters；diagnostics 在 stderr）：
+
+```bash
+uv run --locked python -m agent_meter.providers.claude < tests/fixtures/providers/claude/happy.json
+```
 
 Required local toolchain:
 

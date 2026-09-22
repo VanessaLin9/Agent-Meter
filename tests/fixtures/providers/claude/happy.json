@@ -1,0 +1,20 @@
+{
+  "session_id": "fake-session-not-a-real-id",
+  "account": {
+    "email": "PLANTED_PROVIDER_TOKEN_VALUE_DO_NOT_EMIT"
+  },
+  "model": {
+    "id": "fake-model",
+    "display_name": "Fake Model"
+  },
+  "rate_limits": {
+    "five_hour": {
+      "used_percentage": 23.5,
+      "resets_at": 2000004000
+    },
+    "seven_day": {
+      "used_percentage": 41.2,
+      "resets_at": 2000600400
+    }
+  }
+}
