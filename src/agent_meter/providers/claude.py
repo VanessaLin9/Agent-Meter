@@ -19,7 +19,7 @@ import json
 import math
 import sys
 import time
-from typing import BinaryIO, TextIO
+from typing import BinaryIO, NoReturn, TextIO
 
 from agent_meter.cache import ProviderCollectionFailure, ProviderCollectionSuccess
 from agent_meter.models import QuotaMeter
@@ -162,15 +162,23 @@ def _decode_json_object(raw: bytes) -> object | ProviderCollectionFailure:
     stripped = text.strip()
     if not stripped:
         return _failure("empty_input")
-    decoder = json.JSONDecoder()
+    decoder = json.JSONDecoder(parse_constant=_reject_nonstandard_constant)
     try:
         parsed, end = decoder.raw_decode(stripped)
-    except json.JSONDecodeError:
+    except (json.JSONDecodeError, ValueError, RecursionError):
+        # CONTRACT: stdout 必須仍能走出 typed failure。超大整數是 ValueError、
+        # 過深巢狀是 RecursionError；標準 JSON 也沒有 NaN／Infinity（PR #4）。
         return _failure("malformed_json")
     if stripped[end:].strip():
         return _failure("extra_data")
     value: object = parsed
     return value
+
+
+def _reject_nonstandard_constant(_literal: str) -> NoReturn:
+    # CONTRACT: RFC 8259 JSON 沒有 NaN／Infinity；不得因 unknown field
+    # 裡的非標準常數而誤判 success（PR #4）。
+    raise ValueError("non-standard JSON constant")
 
 
 def _parse_window(window: object, *, meter_id: str, label: str) -> QuotaMeter | None:
