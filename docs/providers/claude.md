@@ -20,24 +20,29 @@ Authentication 由 Claude Code 管理。Ingestion command 不讀取、不保存 
 
 ## Input and stdout behavior
 
-- stdin 必須 bounded read，並驗證為單一 JSON payload。
-- stdout 若輸出 normalized JSON，就不能含 prompt、progress 或 warning。
-- Human diagnostics 全部送 stderr。
-- Empty stdin、malformed JSON 或缺少 `rate_limits` 不得覆蓋 last-good data。
+- Ingest command：`python -m agent_meter.providers.claude`。這是 Collector parser，stdout 是 typed JSON，不是 Claude Code 畫面上的 status line。
+- stdin 必須 bounded read（預設 1 MiB），並驗證為單一 JSON payload；後面若還有非空白內容視為 malformed。
+- stdout 永遠是一行 machine-readable JSON（`result=success|failure`），不能含 prompt、progress 或 warning。
+- Human diagnostics 全部送 stderr；成功時 stderr 保持空白。
+- Empty stdin、malformed JSON、`rate_limits` 缺失／null，或沒有任何合法 meter 時回傳 typed failure，由 orchestrator 決定是否保留 last-good data。
+- 不得把 unknown status-line fields（account、session、transcript path）複製到 result、log 或 error message。
 
 ## Field behavior
 
 - `remaining_percentage = 100 - used_percentage`。
-- Percentage 缺失、非數字或超出 0–100 時回傳 `malformed_response`。
-- 不得 silently clamp。
-- `resets_at` 缺失時是否接受 meter，需由 implementation task 依 UI requirement 明確決定。
+- Percentage 缺失、非數字、boolean、NaN/Inf 或超出 0–100 時，該 window 不產出 meter，且不得 silently clamp。
+- 兩個 window 可獨立缺席；至少一個合法 meter 即為 success。兩個 window 都無法產出 meter 時回傳 `malformed_response`。
+- `resets_at` 缺失、null 或不是非負整數 Unix seconds 時，省略 `reset_at`，不因此拒絕合法 percentage。
 
 ## Failure mapping
 
-- Status-line ingestion 未設定 → `not_configured`。
-- Claude Code session 不可用 → `not_authenticated`。
-- Empty／malformed input 或 required field 缺失 → `malformed_response`。
-- 寫入 Collector local handoff 失敗 → `internal`；不得破壞已存在的 last-good snapshot。
+本 ingest command 只從 stdin 解析 structured data，因此目前只產生 `malformed_response`（empty、oversized、malformed JSON、缺少 `rate_limits`、或沒有合法 meter）。`not_configured`、`not_authenticated` 與 cache write `internal` 留給 orchestrator／後續 handoff，不在本 module 發明假資料。
+
+Last-good fallback 由 orchestrator 依 typed failure 決定；adapter 不寫 cache。
+
+## Offline fixtures
+
+Sanitized fixtures 在 `tests/fixtures/providers/claude/`。`happy.json` 含植入的 fake secret，用來證明 output／error 不會回顯 unknown fields。
 
 ## Manual smoke test
 

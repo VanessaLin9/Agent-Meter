@@ -1,0 +1,10 @@
+{
+  "session_id": "fake-session-not-a-real-id",
+  "model": {
+    "id": "fake-model",
+    "display_name": "Fake Model"
+  },
+  "cost": {
+    "total_cost_usd": 0
+  }
+}

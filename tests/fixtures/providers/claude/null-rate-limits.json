@@ -1,0 +1,7 @@
+{
+  "session_id": "fake-session-not-a-real-id",
+  "rate_limits": null,
+  "account": {
+    "email": "PLANTED_PROVIDER_TOKEN_VALUE_DO_NOT_EMIT"
+  }
+}
