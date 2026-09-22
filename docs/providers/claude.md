@@ -22,6 +22,7 @@ Authentication 由 Claude Code 管理。Ingestion command 不讀取、不保存 
 
 - Ingest command：`python -m agent_meter.providers.claude`。這是 Collector parser，stdout 是 typed JSON，不是 Claude Code 畫面上的 status line。
 - stdin 必須 bounded read（預設 1 MiB），並驗證為單一 JSON payload；後面若還有非空白內容視為 malformed。
+- 超大 JSON 整數（`ValueError`）、過深巢狀（`RecursionError`）與非標準 `NaN`／`Infinity` 一律當 malformed JSON，不得讓 CLI 在寫出 typed result 前崩潰，也不得因 unknown field 裡的非標準常數而 success。
 - stdout 永遠是一行 machine-readable JSON（`result=success|failure`），不能含 prompt、progress 或 warning。
 - Human diagnostics 全部送 stderr；成功時 stderr 保持空白。
 - Empty stdin、malformed JSON、`rate_limits` 缺失／null，或沒有任何合法 meter 時回傳 typed failure，由 orchestrator 決定是否保留 last-good data。

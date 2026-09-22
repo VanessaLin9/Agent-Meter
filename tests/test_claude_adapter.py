@@ -205,6 +205,64 @@ def test_invalid_utf8_is_malformed_without_leaking_bytes() -> None:
     assert FAKE_SECRET not in result.message
 
 
+def _huge_integer_payload() -> bytes:
+    return (b"1" * 5000) + b"\n" + FAKE_SECRET.encode()
+
+
+def _deeply_nested_payload() -> bytes:
+    depth = 10_000
+    return b'{"a":' * depth + json.dumps(FAKE_SECRET).encode() + b"}" * depth
+
+
+def _nonstandard_constant_payload(constant: str) -> bytes:
+    return (
+        b'{"rate_limits":{"five_hour":{"used_percentage":10}},"extra":'
+        + constant.encode()
+        + b',"secret":"'
+        + FAKE_SECRET.encode()
+        + b'"}'
+    )
+
+
+def _assert_typed_malformed_channels(raw: bytes) -> None:
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    exit_code = ingest(io.BytesIO(raw), stdout, stderr, now=NOW)
+    assert exit_code == 1
+    payload = json.loads(stdout.getvalue())
+    assert payload["result"] == "failure"
+    assert payload["code"] == "malformed_json"
+    assert FAKE_SECRET not in stdout.getvalue()
+    assert FAKE_SECRET not in stderr.getvalue()
+
+    completed = subprocess.run(
+        [sys.executable, "-m", "agent_meter.providers.claude"],
+        input=raw,
+        capture_output=True,
+        check=False,
+        timeout=10,
+    )
+    assert completed.returncode == 1
+    cli_payload = json.loads(completed.stdout.decode("utf-8"))
+    assert cli_payload["result"] == "failure"
+    assert cli_payload["code"] == "malformed_json"
+    assert FAKE_SECRET not in completed.stdout.decode("utf-8")
+    assert FAKE_SECRET not in completed.stderr.decode("utf-8")
+
+
+def test_oversized_integer_json_stays_on_typed_failure_channel() -> None:
+    _assert_typed_malformed_channels(_huge_integer_payload())
+
+
+def test_deeply_nested_json_stays_on_typed_failure_channel() -> None:
+    _assert_typed_malformed_channels(_deeply_nested_payload())
+
+
+def test_nonstandard_json_constants_are_rejected_even_in_unknown_fields() -> None:
+    for constant in ("NaN", "Infinity", "-Infinity"):
+        _assert_typed_malformed_channels(_nonstandard_constant_payload(constant))
+
+
 def test_failure_lets_orchestrator_keep_last_good_snapshot() -> None:
     previous_success = collect_statusline_bytes(_fixture_bytes("happy.json"), now=NOW - 10)
     assert isinstance(previous_success, ProviderCollectionSuccess)
