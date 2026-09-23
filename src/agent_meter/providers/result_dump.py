@@ -1,7 +1,8 @@
-"""Serialize typed collection results for machine-readable stdout.
+"""Serialize typed collection results for machine-readable stdout（PR #5）。
 
 Responsibility: dump success/failure without copying unknown upstream fields.
-Non-goals: provider transport, parsing, or cache I/O.
+Non-goals: provider transport, parsing, or cache I/O. Shared by Claude and Codex
+so neither CLI copies account/RPC extras onto stdout.
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ def dump_collection_result(
     """Serialize a typed result without copying unknown upstream fields."""
 
     # SECURITY: dump only normalized fields. Provider extras such as account
-    # identifiers and raw RPC envelopes must never appear here.
+    # identifiers and raw RPC envelopes must never appear here（PR #5）。
     if isinstance(result, ProviderCollectionSuccess):
         return {
             "result": "success",
