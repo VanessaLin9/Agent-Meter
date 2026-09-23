@@ -102,8 +102,8 @@ def collect(
     payload = read_rate_limits_result(resolved, env=child_env, deadline=deadline, stderr=stderr)
     if isinstance(payload, ProviderCollectionFailure):
         return payload
-    # PROVIDER: rateLimitsByLimitId is ignored in v0.1; mapping is locked to
-    # primary/secondary so a future lookup cannot silently replace meters.
+    # PROVIDER: rateLimitsByLimitId 在 v0.1 忽略；mapping 鎖定 primary／
+    # secondary，避免未來 limit-id lookup 在沒有 tests 的情況下偷換 meters（PR #5）。
     return collect_rate_limits(payload, now=now)
 
 

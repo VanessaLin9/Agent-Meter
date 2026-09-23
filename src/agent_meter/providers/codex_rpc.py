@@ -30,6 +30,8 @@ CODEX_SOURCE = "codex_app_server"
 DEFAULT_DEADLINE_SECONDS = 10.0
 DEFAULT_MAX_LINE_BYTES = 1_048_576
 _TERMINATE_GRACE_SECONDS = 1.0
+# PROVIDER: handshake ids follow the proven app-server JSONL sequence, not
+# sequential 1/2. Pairing is by these ids, never by stdout line order（PR #5）。
 _INITIALIZE_ID = 1
 _RATE_LIMITS_ID = 3
 _CLIENT_INFO = {
@@ -60,8 +62,8 @@ _ALLOWED_ENV_KEYS = frozenset(
     }
 )
 
-# SECURITY: never copy parent env wholesale. Tokens such as OPENAI_API_KEY
-# stay out of the child even if the Collector process has them.
+# SECURITY: 不得整份繼承 parent env。OPENAI_API_KEY 這類 token 就算 Collector
+# process 有，也進不了 app-server child（PR #5）。
 
 
 class _RpcTimeout(Exception):
@@ -149,6 +151,8 @@ def read_rate_limits_result(
             list(command),
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
+            # SECURITY: child stderr may contain account text; discard it. Our
+            # diagnostics stay on the caller stderr, never forwarded（PR #5）。
             stderr=subprocess.DEVNULL,
             env=dict(env),
             start_new_session=True,
@@ -268,6 +272,7 @@ def _wait_result(
                 stderr.write(f"codex: ignored JSON-RPC {label}\n")
             continue
         if message.get("id") != request_id:
+            # CONTRACT: 錯 id 的 response 丟掉，不能當成目前 request 的結果（PR #5）。
             continue
         if "error" in message:
             raise _rpc_error(message["error"])
@@ -311,8 +316,8 @@ def _write_message(stdin: IO[bytes], payload: dict[str, object]) -> None:
 
 
 def _rpc_error(error: object) -> _ProtocolError:
-    # SECURITY: never copy upstream error.message; it may include account or
-    # session text. Map to a stable category from sanitized signals only.
+    # SECURITY: 不得複製 upstream error.message；只從 sanitized 信號映射
+    # not_authenticated / upstream，避免帳號或 session 文字進 typed failure（PR #5）。
     if isinstance(error, dict):
         message = error.get("message")
         if isinstance(message, str) and _looks_unauthenticated(message):
@@ -336,8 +341,8 @@ def _looks_unauthenticated(message: str) -> bool:
 
 
 def _stop_process(proc: subprocess.Popen[bytes]) -> None:
-    # CONTRACT: timeout and success both reap the child. SIGTERM first, then
-    # SIGKILL, including the process group so app-server helpers cannot linger.
+    # CONTRACT: timeout 與 success 都要回收 child。先 SIGTERM 再 SIGKILL，
+    # 含 process group，避免 app-server helper 變成 orphan（PR #5）。
     if proc.stdin is not None:
         try:
             proc.stdin.close()
