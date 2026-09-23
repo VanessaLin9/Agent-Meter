@@ -24,9 +24,9 @@ from agent_meter.providers.claude import (
     CLAUDE_SOURCE,
     collect_statusline,
     collect_statusline_bytes,
-    dump_collection_result,
     ingest,
 )
+from agent_meter.providers.result_dump import dump_collection_result
 
 NOW = 2_000_000_000
 FAKE_SECRET = "PLANTED_PROVIDER_TOKEN_VALUE_DO_NOT_EMIT"

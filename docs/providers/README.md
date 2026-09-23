@@ -1,6 +1,6 @@
 # Provider Documentation
 
-每個 v0.1 provider 在開始實作 adapter 時，都要新增一份 `<provider>.md`。這裡記錄 upstream integration contract，不記錄真實 credential 或 live response。Claude Code parser 已落地，見 `claude.md`。
+每個 v0.1 provider 在開始實作 adapter 時，都要新增一份 `<provider>.md`。這裡記錄 upstream integration contract，不記錄真實 credential 或 live response。Claude Code parser 與 Codex app-server adapter 已落地，見 `claude.md` 與 `codex.md`。
 
 ## Required template
 

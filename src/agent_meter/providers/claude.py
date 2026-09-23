@@ -23,6 +23,7 @@ from typing import BinaryIO, NoReturn, TextIO
 
 from agent_meter.cache import ProviderCollectionFailure, ProviderCollectionSuccess
 from agent_meter.models import QuotaMeter
+from agent_meter.providers.result_dump import dump_collection_result
 
 CLAUDE_PROVIDER_ID = "claude"
 CLAUDE_SOURCE = "claude_statusline"
@@ -114,36 +115,6 @@ def ingest(
         stderr.write(f"claude: {result.category}: {result.message}\n")
         return 1
     return 0
-
-
-def dump_collection_result(
-    result: ProviderCollectionSuccess | ProviderCollectionFailure,
-) -> dict[str, object]:
-    """Serialize a typed result without copying unknown upstream fields."""
-
-    # SECURITY: dump only normalized fields. Status-line extras such as
-    # account, session, and transcript path must never appear here（PR #4）。
-    if isinstance(result, ProviderCollectionSuccess):
-        return {
-            "result": "success",
-            "provider_id": result.provider_id,
-            "source": result.source,
-            "collected_at": result.collected_at,
-            "meters": [
-                meter.model_dump(mode="json", exclude_unset=True) for meter in result.meters
-            ],
-        }
-    payload: dict[str, object] = {
-        "result": "failure",
-        "provider_id": result.provider_id,
-        "source": result.source,
-        "category": result.category,
-        "message": result.message,
-        "retryable": result.retryable,
-    }
-    if result.code is not None:
-        payload["code"] = result.code
-    return payload
 
 
 def main() -> int:
