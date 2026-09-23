@@ -46,4 +46,4 @@ provider transport -> adapter parser -> domain model <- API/cache/ESP32 contract
 8. Local/CI quality entrypoint：`/scripts/quality.sh`
 9. Foundation toolchain decision：`/docs/adr/0001-collector-python-foundation.md`
 
-Normalized usage models 在 `src/agent_meter/models.py`。Aggregation、stale 與 cache envelope 在 `freshness.py`、`aggregation.py`、`cache.py`。Claude Code status-line adapter 在 `src/agent_meter/providers/claude.py`。Orchestrator I/O、HTTP API 與其他 provider adapters 尚未建立。各 component 的入口 module 必須連回相關 contract，並以 `CONTRACT:`、`SECURITY:`、`PROVIDER:`、`FALLBACK:` 標記不容易從 type system 看出的關鍵 invariant。
+Normalized usage models 在 `src/agent_meter/models.py`。Aggregation、stale 與 cache envelope 在 `freshness.py`、`aggregation.py`、`cache.py`。Claude Code status-line adapter 在 `src/agent_meter/providers/claude.py`。Codex app-server adapter 在 `src/agent_meter/providers/codex.py` 與 `codex_rpc.py`。Orchestrator I/O、HTTP API 與 Cursor adapter 尚未建立。各 component 的入口 module 必須連回相關 contract，並以 `CONTRACT:`、`SECURITY:`、`PROVIDER:`、`FALLBACK:` 標記不容易從 type system 看出的關鍵 invariant。

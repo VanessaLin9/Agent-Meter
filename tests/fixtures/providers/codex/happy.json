@@ -1,0 +1,24 @@
+{
+  "account": {
+    "email": "PLANTED_PROVIDER_TOKEN_VALUE_DO_NOT_EMIT"
+  },
+  "rateLimits": {
+    "primary": {
+      "usedPercent": 18,
+      "windowDurationMins": 300,
+      "resetsAt": 2000004000,
+      "email": "PLANTED_PROVIDER_TOKEN_VALUE_DO_NOT_EMIT"
+    },
+    "secondary": {
+      "usedPercent": 5,
+      "windowDurationMins": 10080,
+      "resetsAt": 2000600400
+    }
+  },
+  "rateLimitsByLimitId": {
+    "codex": {
+      "usedPercent": 99,
+      "token": "PLANTED_PROVIDER_TOKEN_VALUE_DO_NOT_EMIT"
+    }
+  }
+}
