@@ -32,6 +32,7 @@
 - `autoSpend`、`autoLimit`、`apiSpend`、`apiLimit` 是 optional included-pool cents。v0.1 不把它們放進 percent quota meter，避免把金額混進 percentage unit。欄位存在或缺失都不改變 success。
 - On-demand 來自 `spendLimitUsage.individualUsed` / `individualLimit` / `individualRemaining`，單位是 cents。Normalized `on_demand` spend meter 使用 USD major units：cents / 100。
 - `individualUsed` 缺失時省略整個 spend meter。`0` cents 是真實的 0，仍產出 meter。`individualLimit` 小於等於 0 時省略 `limit`。
+- 非整百且大到無法轉成 float 的 cents 視為無法安全轉換：`individualUsed` 省略整顆 spend meter，`individualLimit`／`individualRemaining` 只省略該欄位。不得讓這個轉換例外中斷合法 quota meters。
 
 ## Failure mapping
 

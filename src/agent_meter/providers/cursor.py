@@ -158,7 +158,12 @@ def _cents_to_usd(value: object) -> int | float | None:
         return None
     if cents % 100 == 0:
         return cents // 100
-    return cents / 100
+    try:
+        return cents / 100
+    except OverflowError:
+        # PROVIDER: 非整百且大到無法轉成 float 時省略該金額。optional spend
+        # 不能用 OverflowError 吃掉仍然合法的 quota meters（PR #6）。
+        return None
 
 
 def _positive_usd(value: object) -> int | float | None:
