@@ -239,6 +239,47 @@ def test_invalid_spend_fields_do_not_drop_quota_meters() -> None:
     assert [meter.id for meter in result.meters] == ["cursor_models"]
 
 
+def test_unsafe_spend_cents_are_omitted_without_raising() -> None:
+    unsafe_cents = 10**400 + 1
+
+    used = collect_period_usage(
+        {
+            "planUsage": {"autoPercentUsed": 10, "apiPercentUsed": 20},
+            "spendLimitUsage": {"individualUsed": unsafe_cents},
+        },
+        now=NOW,
+    )
+    assert isinstance(used, ProviderCollectionSuccess)
+    assert [meter.id for meter in used.meters] == ["cursor_models", "other_models"]
+
+    limit = collect_period_usage(
+        {
+            "planUsage": {"autoPercentUsed": 10},
+            "spendLimitUsage": {"individualUsed": 450, "individualLimit": unsafe_cents},
+        },
+        now=NOW,
+    )
+    assert isinstance(limit, ProviderCollectionSuccess)
+    limited = _spend(limit)
+    assert limited.used == 4.5
+    assert "limit" not in limited.model_dump(exclude_unset=True)
+
+    remaining = collect_period_usage(
+        {
+            "planUsage": {"autoPercentUsed": 10},
+            "spendLimitUsage": {
+                "individualUsed": 450,
+                "individualRemaining": unsafe_cents,
+            },
+        },
+        now=NOW,
+    )
+    assert isinstance(remaining, ProviderCollectionSuccess)
+    without_remaining = _spend(remaining)
+    assert without_remaining.used == 4.5
+    assert "remaining" not in without_remaining.model_dump(exclude_unset=True)
+
+
 def test_one_cent_stays_a_fractional_dollar() -> None:
     result = collect_period_usage(
         {
