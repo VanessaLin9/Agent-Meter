@@ -1,14 +1,19 @@
-"""Cursor period-usage parser tests.
+"""Cursor period-usage adapter tests.
 
-Clock, Cursor login state, and Connect RPC are never used.
-Values are fictional. Transport belongs to a later checkpoint.
+Clock, the real Cursor login state, and live Connect RPC are never used.
+Values are fictional. The transport tests inject a temporary state directory.
 """
 
 from __future__ import annotations
 
 import json
 import math
+import sqlite3
+import subprocess
+import sys
 from pathlib import Path
+
+import pytest
 
 from agent_meter.cache import (
     ProviderCollectionFailure,
@@ -20,7 +25,16 @@ from agent_meter.models import QuotaMeter, SpendMeter
 from agent_meter.providers.cursor import (
     CURSOR_PROVIDER_ID,
     CURSOR_SOURCE,
+    collect,
     collect_period_usage,
+    main,
+)
+from agent_meter.providers.cursor_rpc import (
+    CursorTransport,
+    PreparedRequest,
+    TransportResponse,
+    default_state_dir,
+    urllib_transport,
 )
 from agent_meter.providers.result_dump import dump_collection_result
 
@@ -313,3 +327,215 @@ def test_failure_lets_orchestrator_keep_last_good_snapshot() -> None:
     ]
     assert merged.collected_at == NOW - 10
     assert FAKE_SECRET not in merged.error.message
+
+
+def _write_state(root: Path, *, token: str | None, quoted: bool = False) -> Path:
+    root.mkdir(parents=True, exist_ok=True)
+    database = root / "state.vscdb"
+    connection = sqlite3.connect(database)
+    connection.execute("CREATE TABLE ItemTable (key TEXT PRIMARY KEY, value TEXT)")
+    if token is not None:
+        stored = json.dumps(token) if quoted else token
+        connection.execute(
+            "INSERT INTO ItemTable (key, value) VALUES (?, ?)",
+            ("cursorAuth/accessToken", stored),
+        )
+    connection.commit()
+    connection.close()
+    (root / "storage.json").write_text(
+        json.dumps(
+            {
+                "telemetry.machineId": "machine-a",
+                "telemetry.macMachineId": "mac-a",
+            }
+        ),
+        encoding="utf-8",
+    )
+    return database
+
+
+def _accepting_transport(body: bytes) -> CursorTransport:
+    def transport(
+        request: PreparedRequest, *, deadline_seconds: float
+    ) -> TransportResponse | ProviderCollectionFailure:
+        headers = dict(request.headers)
+        constructed = (
+            headers.get("Authorization") == f"Bearer {FAKE_SECRET}"
+            and headers.get("x-cursor-checksum") == "00000000machine-a/mac-a"
+            and headers.get("x-cursor-client-version") == "9.9.9"
+            and headers.get("x-cursor-client-type") == "ide"
+            and request.body == b"{}"
+            and request.url.endswith("/GetCurrentPeriodUsage")
+            and deadline_seconds == 3
+        )
+        if not constructed:
+            return ProviderCollectionFailure(
+                provider_id=CURSOR_PROVIDER_ID,
+                source=CURSOR_SOURCE,
+                category="upstream",
+                message="request was not constructed as expected",
+                retryable=False,
+                code="bad_request",
+            )
+        return TransportResponse(status=200, body=body)
+
+    return transport
+
+
+def test_collect_maps_mocked_connect_rpc_without_leaking_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    database = _write_state(tmp_path, token=FAKE_SECRET)
+    before = database.read_bytes()
+    storage_before = (tmp_path / "storage.json").read_bytes()
+
+    def forbid_real_state() -> Path:
+        raise AssertionError("real Cursor state dir")
+
+    monkeypatch.setattr(
+        "agent_meter.providers.cursor_rpc.default_state_dir",
+        forbid_real_state,
+    )
+    result = collect(
+        now=NOW,
+        deadline_seconds=3,
+        state_dir=tmp_path,
+        client_version="9.9.9",
+        transport=_accepting_transport((FIXTURE_DIR / "happy.json").read_bytes()),
+    )
+
+    assert isinstance(result, ProviderCollectionSuccess)
+    assert [meter.id for meter in result.meters] == [
+        "cursor_models",
+        "other_models",
+        "on_demand",
+    ]
+    dumped = json.dumps(dump_collection_result(result))
+    assert FAKE_SECRET not in dumped
+    assert "machine-a" not in dumped
+    assert "mac-a" not in dumped
+    assert database.read_bytes() == before
+    assert (tmp_path / "storage.json").read_bytes() == storage_before
+
+
+def test_json_encoded_token_is_accepted(tmp_path: Path) -> None:
+    _write_state(tmp_path, token=FAKE_SECRET, quoted=True)
+    result = collect(
+        now=NOW,
+        deadline_seconds=3,
+        state_dir=tmp_path,
+        client_version="9.9.9",
+        transport=_accepting_transport(b'{"planUsage":{"autoPercentUsed":1}}'),
+    )
+    assert isinstance(result, ProviderCollectionSuccess)
+    assert FAKE_SECRET not in json.dumps(dump_collection_result(result))
+
+
+def test_missing_local_state_is_not_installed(tmp_path: Path) -> None:
+    result = collect(
+        now=NOW,
+        state_dir=tmp_path,
+        client_version="9.9.9",
+        transport=_accepting_transport(b"{}"),
+    )
+    assert isinstance(result, ProviderCollectionFailure)
+    assert result.category == "not_installed"
+    assert result.code == "missing_local_state"
+    assert FAKE_SECRET not in result.message
+
+
+def test_database_without_login_is_not_authenticated(tmp_path: Path) -> None:
+    _write_state(tmp_path, token=None)
+    result = collect(
+        now=NOW,
+        state_dir=tmp_path,
+        client_version="9.9.9",
+        transport=_accepting_transport(b"{}"),
+    )
+    assert isinstance(result, ProviderCollectionFailure)
+    assert result.category == "not_authenticated"
+    assert result.code == "missing_login"
+    assert FAKE_SECRET not in result.message
+
+
+def test_http_401_is_auth_expired_without_reading_body(tmp_path: Path) -> None:
+    _write_state(tmp_path, token=FAKE_SECRET)
+
+    def transport(request: PreparedRequest, *, deadline_seconds: float) -> TransportResponse:
+        del request, deadline_seconds
+        return TransportResponse(status=401, body=FAKE_SECRET.encode("utf-8"))
+
+    result = collect(
+        now=NOW,
+        state_dir=tmp_path,
+        client_version="9.9.9",
+        transport=transport,
+    )
+    assert isinstance(result, ProviderCollectionFailure)
+    assert result.category == "auth_expired"
+    assert result.retryable is False
+    assert FAKE_SECRET not in result.message
+
+
+def test_server_error_is_retryable_upstream(tmp_path: Path) -> None:
+    _write_state(tmp_path, token=FAKE_SECRET)
+
+    def transport(request: PreparedRequest, *, deadline_seconds: float) -> TransportResponse:
+        del request, deadline_seconds
+        return TransportResponse(status=503, body=FAKE_SECRET.encode("utf-8"))
+
+    result = collect(
+        now=NOW,
+        state_dir=tmp_path,
+        client_version="9.9.9",
+        transport=transport,
+    )
+    assert isinstance(result, ProviderCollectionFailure)
+    assert result.category == "upstream"
+    assert result.retryable is True
+    assert FAKE_SECRET not in result.message
+
+
+def test_malformed_response_body_does_not_echo_payload(tmp_path: Path) -> None:
+    _write_state(tmp_path, token=FAKE_SECRET)
+
+    def transport(request: PreparedRequest, *, deadline_seconds: float) -> TransportResponse:
+        del request, deadline_seconds
+        return TransportResponse(status=200, body=f"not-json {FAKE_SECRET}".encode())
+
+    result = collect(
+        now=NOW,
+        state_dir=tmp_path,
+        client_version="9.9.9",
+        transport=transport,
+    )
+    assert isinstance(result, ProviderCollectionFailure)
+    assert result.category == "malformed_response"
+    assert FAKE_SECRET not in result.message
+
+
+def test_non_positive_deadline_is_timeout_without_a_request() -> None:
+    request = PreparedRequest(url="https://example.invalid", body=b"{}", headers=())
+    result = urllib_transport(request, deadline_seconds=0)
+    assert isinstance(result, ProviderCollectionFailure)
+    assert result.category == "timeout"
+    assert result.retryable is True
+    assert result.code == "deadline_exceeded"
+
+
+def test_cli_without_live_does_not_read_cursor_state() -> None:
+    completed = subprocess.run(
+        [sys.executable, "-m", "agent_meter.providers.cursor"],
+        capture_output=True,
+        check=False,
+        timeout=5,
+    )
+    assert completed.returncode == 2
+    assert completed.stdout == b""
+    assert b"--live" in completed.stderr
+    assert FAKE_SECRET not in completed.stderr.decode("utf-8")
+    assert main([]) == 2
+
+
+def test_default_state_dir_points_at_cursor_global_storage() -> None:
+    assert default_state_dir().name == "globalStorage"

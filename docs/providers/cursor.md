@@ -19,10 +19,22 @@
 ## Authentication boundary
 
 - Adapter 只讀使用 Cursor 已登入的 local state。
-- Access token、machine identifier 與 checksum 只能存在 request construction boundary。
-- 不得 log、cache、fixture 或回傳這些值。
-- Token refresh 若會修改 Cursor-owned state，必須由獨立 task 明確授權；v0.1 預設遇到過期 token 回傳 `auth_expired`。
+- macOS state 在 `~/Library/Application Support/Cursor/User/globalStorage/`：`state.vscdb` 的 `cursorAuth/accessToken`，以及 `storage.json` 的 `telemetry.machineId`／`telemetry.macMachineId`。
+- `state.vscdb` 以 SQLite `mode=ro` 開啟。Adapter 不寫 Cursor 設定，也不 refresh token。
+- Access token、machine identifier 與 checksum 只存在 `cursor_rpc.build_request` 到 transport 送出這段。`PreparedRequest` 的 repr 會遮住 headers。
+- Client version 預設讀 `/Applications/Cursor.app/Contents/Resources/app/package.json` 的 `version`。Tests 可注入。
+- 不得 log、cache、fixture 或回傳 token、machine id、checksum 或 raw response。
+- Token refresh 若會修改 Cursor-owned state，必須由獨立 task 明確授權；v0.1 遇到 401 回傳 `auth_expired`。
 - Cursor IDE 關閉時，只要既有 local session 有效，adapter 應仍可運作。
+
+## Command
+
+- Library entry：`agent_meter.providers.cursor.collect`。
+- CLI：`python -m agent_meter.providers.cursor --live`。沒有 `--live` 時不得讀 local state，也不得發 request，exit `2`。
+- Connect RPC：`POST https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage`，body `{}`。
+- Checksum header 目前依 feasibility record：`00000000` + machineId + `/` + macMachineId。
+- Redirect 不跟隨，避免把 `Authorization` 送到另一個 host。
+- Deadline 預設 10 秒。`deadline_seconds <= 0` 直接回 `timeout`，不送 request。
 
 ## Field behavior
 
