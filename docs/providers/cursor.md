@@ -8,10 +8,11 @@
 
 - Connect RPC：`DashboardService/GetCurrentPeriodUsage`。
 - Source ID：`cursor_dashboard_connect_rpc`。
-- `autoPercentUsed` → `cursor_models` quota meter。
-- `apiPercentUsed` → `other_models` quota meter。
-- `billingCycleEnd` → 兩個 meter 的 `reset_at`。
-- Upstream billing cycle timestamp 是 milliseconds；normalized contract 一律轉為 Unix seconds。
+- Parser entry：`agent_meter.providers.cursor.collect_period_usage`。這個函式只吃已解碼的 JSON，不讀 login state、不組 request、不發 network。
+- `planUsage.autoPercentUsed` → `cursor_models` quota meter。
+- `planUsage.apiPercentUsed` → `other_models` quota meter。
+- 頂層 `billingCycleEnd` → 有產出的 meter 共用的 `reset_at`。
+- Upstream billing cycle timestamp 是 milliseconds；normalized contract 一律轉為 Unix seconds（整數除以 1000）。小於 `10_000_000_000` 的值看起來像秒，省略 `reset_at`，不除成 1970。
 
 因為不是 official public Individual Usage API，任何 Cursor upgrade 都可能改變 endpoint、headers 或 response shape。
 
@@ -26,10 +27,11 @@
 ## Field behavior
 
 - `remaining_percentage = 100 - percentUsed`。
-- Percentage 缺失、非數字或超出 0–100 時，對應 required meter 視為 malformed。
-- `autoSpend`、`autoLimit`、`apiSpend`、`apiLimit` 與 on-demand spend 都是 optional。
-- Upstream 沒有回傳 spend value 時，省略 spend meter，不建立假資料或全 `null` object。
-- 若只有其中一個 quota pool 有效，是否接受部分 provider result 必須在 implementation task 明確決定；不得自行猜測。
+- 兩個 quota pool 分開判斷。Percentage 缺失、非數字、boolean、NaN/Inf 或超出 0–100 時，省略該 pool，不 clamp、不補 0。
+- 至少一個 quota pool 合法即為 success。兩個都不合法時回傳 `malformed_response`，即使 on-demand spend 有值。
+- `autoSpend`、`autoLimit`、`apiSpend`、`apiLimit` 是 optional included-pool cents。v0.1 不把它們放進 percent quota meter，避免把金額混進 percentage unit。欄位存在或缺失都不改變 success。
+- On-demand 來自 `spendLimitUsage.individualUsed` / `individualLimit` / `individualRemaining`，單位是 cents。Normalized `on_demand` spend meter 使用 USD major units：cents / 100。
+- `individualUsed` 缺失時省略整個 spend meter。`0` cents 是真實的 0，仍產出 meter。`individualLimit` 小於等於 0 時省略 `limit`。
 
 ## Failure mapping
 
@@ -42,6 +44,10 @@
 - JSON／required field／unit 不符 → `malformed_response`。
 
 Last-good fallback 由 orchestrator 負責；Cursor schema/auth 失敗不得影響 Codex 或 Claude。
+
+## Offline fixtures
+
+Sanitized fixtures 在 `tests/fixtures/providers/cursor/`。`happy.json` 植入 fake secret，用來證明 output 不會回顯 email、token、machine id、`autoSpend` 或 raw envelope。Parser tests 不讀 Cursor local state，也不呼叫 Connect RPC。
 
 ## Manual smoke test
 

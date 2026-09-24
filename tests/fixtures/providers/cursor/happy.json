@@ -1,0 +1,19 @@
+{
+  "email": "PLANTED_PROVIDER_TOKEN_VALUE_DO_NOT_EMIT",
+  "billingCycleStart": 1999000000000,
+  "billingCycleEnd": 2000600000000,
+  "planUsage": {
+    "autoPercentUsed": 18,
+    "apiPercentUsed": 5,
+    "autoSpend": 999,
+    "apiLimit": 2000,
+    "token": "PLANTED_PROVIDER_TOKEN_VALUE_DO_NOT_EMIT"
+  },
+  "spendLimitUsage": {
+    "limitType": "user",
+    "individualUsed": 450,
+    "individualLimit": 2000,
+    "individualRemaining": 1550,
+    "machineId": "PLANTED_PROVIDER_TOKEN_VALUE_DO_NOT_EMIT"
+  }
+}
