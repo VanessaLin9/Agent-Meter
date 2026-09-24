@@ -1,4 +1,4 @@
-"""Cursor unofficial Connect RPC usage parser（checkpoint 1）。
+"""Cursor unofficial Connect RPC usage parser（PR #6）。
 
 Responsibility: map a sanitized `GetCurrentPeriodUsage` JSON object into typed
 collection results. Non-goals: reading Cursor login state, building request
@@ -24,8 +24,8 @@ from agent_meter.models import Meter, QuotaMeter, SpendMeter
 CURSOR_PROVIDER_ID = "cursor"
 CURSOR_SOURCE = "cursor_dashboard_connect_rpc"
 
-# PROVIDER: values below this are seconds, not the milliseconds Cursor documents.
-# Dividing them would land near 1970, so reset_at is omitted instead.
+# PROVIDER: 小於這個值的 billingCycleEnd 看起來像秒。Cursor 文件是毫秒，
+# 再除 1000 會落到 1970，所以省略 reset_at，不猜單位（PR #6）。
 _MILLISECOND_THRESHOLD = 10_000_000_000
 
 _POOLS: tuple[tuple[str, str, str], ...] = (
@@ -65,12 +65,12 @@ def collect_period_usage(
         if meter is not None:
             meters.append(meter)
     if not meters:
-        # FALLBACK: a bad pool is omitted. Do not invent 0% and do not keep a
-        # spend-only result when both quota pools are unusable.
+        # FALLBACK: 壞掉的 pool 省略，不補 0。兩個 quota pool 都無法使用時，
+        # 即使 on-demand 有金額也不留下 spend-only success（PR #6）。
         return _mapping_failure("no_valid_meters")
 
-    # PROVIDER: autoSpend / apiSpend stay unmapped. Included-pool usage is the
-    # percentage meters; those cent fields are not a second currency meter.
+    # PROVIDER: autoSpend／apiSpend 不放進 percent quota meter。Included pool
+    # 的顯示值是 percentage；這些 cents 不是第二顆 currency meter（PR #6）。
     spend = _parse_on_demand(payload.get("spendLimitUsage"), reset_at=reset_at)
     if spend is not None:
         meters.append(spend)
@@ -87,8 +87,8 @@ def _parse_pool(
 ) -> QuotaMeter | None:
     remaining = _remaining_percentage(used_percent)
     if remaining is None:
-        # CONTRACT: each pool is judged alone. Missing, non-numeric, or
-        # out-of-range percent is skipped, never clamped to 0 or 100.
+        # CONTRACT: 兩個 pool 分開判斷。缺值、非數字或超出 0–100 只省略該 pool，
+        # 不 clamp，也不把整個 Cursor 判成失敗（PR #6）。
         return None
     meter_kwargs: dict[str, object] = {
         "id": meter_id,
@@ -107,8 +107,8 @@ def _parse_on_demand(spend_limit: object, *, reset_at: int | None) -> SpendMeter
         return None
     used = _cents_to_usd(spend_limit.get("individualUsed"))
     if used is None:
-        # PROVIDER: no spent amount means no on-demand meter, even when a limit
-        # is present. Zero cents is a real zero and still produces a meter.
+        # PROVIDER: 沒有 individualUsed 就沒有 on-demand meter，即使 limit 有值。
+        # 0 cents 是真實的 0，仍要產出 meter（PR #6）。
         return None
     meter_kwargs: dict[str, object] = {
         "id": "on_demand",
@@ -151,6 +151,8 @@ def _billing_cycle_end_seconds(value: object) -> int | None:
 
 
 def _cents_to_usd(value: object) -> int | float | None:
+    # PROVIDER: on-demand upstream 是 cents。Normalized spend meter 用 USD
+    # major units，避免和 percent quota meter 混單位（PR #6）。
     cents = _non_negative_int(value)
     if cents is None:
         return None
