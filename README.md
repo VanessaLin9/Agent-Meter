@@ -12,7 +12,7 @@ Repository 只保存程式碼、測試、執行文件，以及實作所需的 AP
 
 ## Collector development
 
-Normalized usage models、aggregation／stale policy、Claude Code status-line adapter 與 Codex app-server adapter 已落地。還沒有 Collector HTTP API、cache I/O 或 Cursor adapter。
+Normalized usage models、aggregation／stale policy、Claude Code status-line adapter、Codex app-server adapter 與 Cursor period-usage parser 已落地。還沒有 Cursor Connect RPC client、Collector HTTP API 或 cache I/O。
 
 Claude ingest（stdin JSON → typed meters；diagnostics 在 stderr）：
 
