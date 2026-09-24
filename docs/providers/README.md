@@ -1,6 +1,6 @@
 # Provider Documentation
 
-每個 v0.1 provider 在開始實作 adapter 時，都要新增一份 `<provider>.md`。這裡記錄 upstream integration contract，不記錄真實 credential 或 live response。Claude Code parser、Codex app-server adapter 與 Cursor period-usage parser 已落地，見 `claude.md`、`codex.md` 與 `cursor.md`。Cursor Connect RPC transport 尚未建立。
+每個 v0.1 provider 在開始實作 adapter 時，都要新增一份 `<provider>.md`。這裡記錄 upstream integration contract，不記錄真實 credential 或 live response。Claude Code parser、Codex app-server adapter 與 Cursor Connect RPC adapter 已落地，見 `claude.md`、`codex.md` 與 `cursor.md`。
 
 ## Required template
 

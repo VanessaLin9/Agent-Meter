@@ -1,10 +1,12 @@
-"""Cursor unofficial Connect RPC usage parser（PR #6）。
+"""Cursor unofficial Connect RPC usage adapter（PR #6）。
 
-Responsibility: map a sanitized `GetCurrentPeriodUsage` JSON object into typed
-collection results. Non-goals: reading Cursor login state, building request
-headers, network I/O, token refresh, Collector scheduling, and last-good cache.
+Responsibility: map a `GetCurrentPeriodUsage` JSON object into typed collection
+results, and optionally fetch that object through the read-only Connect RPC
+client. Non-goals: token refresh, Collector scheduling, and last-good cache.
+Login state and request headers stay in `cursor_rpc.py`.
 
-Inputs: a decoded JSON object. Quota inputs are used percent 0–100.
+Inputs: a decoded JSON object, or a live collect with an injected state
+directory and transport. Quota inputs are used percent 0–100.
 `billingCycleEnd` is UTC Unix milliseconds. On-demand spend inputs are integer
 cents. Outputs: ProviderCollectionSuccess with `cursor_models` / `other_models`
 quota meters and an optional `on_demand` spend meter, or
@@ -16,13 +18,28 @@ Retry, cache, and last-good fallback belong to the orchestrator.
 
 from __future__ import annotations
 
+import argparse
+import json
 import math
+import sys
+import time
+from pathlib import Path
 
 from agent_meter.cache import ProviderCollectionFailure, ProviderCollectionSuccess
 from agent_meter.models import Meter, QuotaMeter, SpendMeter
+from agent_meter.providers.cursor_rpc import (
+    CURSOR_PROVIDER_ID,
+    CURSOR_SOURCE,
+    DEFAULT_DEADLINE_SECONDS,
+    CursorTransport,
+    build_request,
+    decode_period_usage_body,
+    load_session,
+    urllib_transport,
+)
+from agent_meter.providers.result_dump import dump_collection_result
 
-CURSOR_PROVIDER_ID = "cursor"
-CURSOR_SOURCE = "cursor_dashboard_connect_rpc"
+__all__ = ["CURSOR_PROVIDER_ID", "CURSOR_SOURCE", "collect", "collect_period_usage"]
 
 # PROVIDER: 小於這個值的 billingCycleEnd 看起來像秒。Cursor 文件是毫秒，
 # 再除 1000 會落到 1970，所以省略 reset_at，不猜單位（PR #6）。
@@ -38,6 +55,58 @@ _FAILURE_MESSAGES = {
     "missing_plan_usage": "Cursor period-usage result is missing planUsage",
     "no_valid_meters": "Cursor period-usage result has no valid quota meters",
 }
+
+
+def collect(
+    *,
+    now: int,
+    deadline_seconds: float = DEFAULT_DEADLINE_SECONDS,
+    state_dir: Path | None = None,
+    version_path: Path | None = None,
+    client_version: str | None = None,
+    transport: CursorTransport | None = None,
+) -> ProviderCollectionSuccess | ProviderCollectionFailure:
+    """Read the local session, call Connect RPC, and map the body.
+
+    Tests inject `state_dir` and `transport`. The default path is live and
+    read-only; it does not refresh tokens or write Cursor files.
+    """
+
+    material = load_session(
+        state_dir=state_dir,
+        version_path=version_path,
+        client_version=client_version,
+    )
+    if isinstance(material, ProviderCollectionFailure):
+        return material
+    request = build_request(material)
+    del material
+    send = urllib_transport if transport is None else transport
+    outcome = send(request, deadline_seconds=deadline_seconds)
+    if isinstance(outcome, ProviderCollectionFailure):
+        return outcome
+    if outcome.status == 401:
+        return ProviderCollectionFailure(
+            provider_id=CURSOR_PROVIDER_ID,
+            source=CURSOR_SOURCE,
+            category="auth_expired",
+            message="Cursor rejected the local login state",
+            retryable=False,
+            code="token_rejected",
+        )
+    if outcome.status != 200:
+        return ProviderCollectionFailure(
+            provider_id=CURSOR_PROVIDER_ID,
+            source=CURSOR_SOURCE,
+            category="upstream",
+            message="Cursor period-usage request was not successful",
+            retryable=outcome.status >= 500,
+            code="upstream_http_error",
+        )
+    payload = decode_period_usage_body(outcome.body)
+    if isinstance(payload, ProviderCollectionFailure):
+        return payload
+    return collect_period_usage(payload, now=now)
 
 
 def collect_period_usage(
@@ -187,6 +256,32 @@ def _non_negative_int(value: object) -> int | None:
     return number
 
 
+def main(argv: list[str] | None = None) -> int:
+    """CLI entry for `python -m agent_meter.providers.cursor`."""
+
+    parser = argparse.ArgumentParser(prog="agent_meter.providers.cursor")
+    parser.add_argument(
+        "--live",
+        action="store_true",
+        help="Read the local Cursor session and call Connect RPC. Required.",
+    )
+    args = parser.parse_args(argv)
+    if not args.live:
+        # SECURITY: live provider access is opt-in. Default CLI must not read
+        # Cursor local state or send the access token（PR #6）。
+        sys.stderr.write("cursor: live Connect RPC is opt-in; pass --live\n")
+        return 2
+    result = collect(now=int(time.time()))
+    sys.stdout.write(
+        json.dumps(dump_collection_result(result), separators=(",", ":"), ensure_ascii=True)
+    )
+    sys.stdout.write("\n")
+    if isinstance(result, ProviderCollectionFailure):
+        sys.stderr.write(f"cursor: {result.category}: {result.message}\n")
+        return 1
+    return 0
+
+
 def _mapping_failure(code: str) -> ProviderCollectionFailure:
     return ProviderCollectionFailure(
         provider_id=CURSOR_PROVIDER_ID,
@@ -196,3 +291,7 @@ def _mapping_failure(code: str) -> ProviderCollectionFailure:
         retryable=False,
         code=code,
     )
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
