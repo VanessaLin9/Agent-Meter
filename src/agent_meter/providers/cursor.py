@@ -35,6 +35,7 @@ from agent_meter.providers.cursor_rpc import (
     build_request,
     decode_period_usage_body,
     load_session,
+    map_http_status,
     urllib_transport,
 )
 from agent_meter.providers.result_dump import dump_collection_result
@@ -85,24 +86,9 @@ def collect(
     outcome = send(request, deadline_seconds=deadline_seconds)
     if isinstance(outcome, ProviderCollectionFailure):
         return outcome
-    if outcome.status == 401:
-        return ProviderCollectionFailure(
-            provider_id=CURSOR_PROVIDER_ID,
-            source=CURSOR_SOURCE,
-            category="auth_expired",
-            message="Cursor rejected the local login state",
-            retryable=False,
-            code="token_rejected",
-        )
-    if outcome.status != 200:
-        return ProviderCollectionFailure(
-            provider_id=CURSOR_PROVIDER_ID,
-            source=CURSOR_SOURCE,
-            category="upstream",
-            message="Cursor period-usage request was not successful",
-            retryable=outcome.status >= 500,
-            code="upstream_http_error",
-        )
+    mapped = map_http_status(outcome.status)
+    if mapped is not None:
+        return mapped
     payload = decode_period_usage_body(outcome.body)
     if isinstance(payload, ProviderCollectionFailure):
         return payload
