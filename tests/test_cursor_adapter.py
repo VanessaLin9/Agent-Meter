@@ -6,11 +6,14 @@ Values are fictional. The transport tests inject a temporary state directory.
 
 from __future__ import annotations
 
+import email.message
 import json
 import math
 import sqlite3
 import subprocess
 import sys
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 import pytest
@@ -521,6 +524,119 @@ def test_non_positive_deadline_is_timeout_without_a_request() -> None:
     assert result.category == "timeout"
     assert result.retryable is True
     assert result.code == "deadline_exceeded"
+
+
+def test_unsafe_json_becomes_sanitized_failure(tmp_path: Path) -> None:
+    secret = FAKE_SECRET.encode("utf-8")
+    bodies = [
+        b'{"email":"' + secret + b'","n":' + b"1" * 5000 + b"}",
+        b'{"email":"' + secret + b'","a":' + (b'{"a":' * 10000) + b"1" + (b"}" * 10000) + b"}",
+        b'{"email":"' + secret + b'","planUsage":{"autoPercentUsed":NaN}}',
+        b'{"email":"' + secret + b'","planUsage":{"autoPercentUsed":Infinity}}',
+    ]
+    _write_state(tmp_path, token=FAKE_SECRET)
+    for body in bodies:
+
+        def transport(
+            request: PreparedRequest, *, deadline_seconds: float, payload: bytes = body
+        ) -> TransportResponse:
+            del request, deadline_seconds
+            return TransportResponse(status=200, body=payload)
+
+        result = collect(
+            now=NOW,
+            state_dir=tmp_path,
+            client_version="9.9.9",
+            transport=transport,
+        )
+        assert isinstance(result, ProviderCollectionFailure)
+        assert result.category == "malformed_response"
+        assert result.code == "malformed_json"
+        assert FAKE_SECRET not in result.message
+
+    for name, code in (
+        ("storage.json", "unreadable_local_state"),
+        ("package.json", "missing_client_version"),
+    ):
+        for body in bodies:
+            root = tmp_path / "cases" / name / str(len(body))
+            _write_state(root, token=FAKE_SECRET)
+            if name == "storage.json":
+                (root / "storage.json").write_bytes(body)
+                result = collect(
+                    now=NOW,
+                    state_dir=root,
+                    client_version="9.9.9",
+                    transport=_accepting_transport(b'{"planUsage":{"autoPercentUsed":1}}'),
+                )
+            else:
+                version_path = root / "package.json"
+                version_path.write_bytes(body)
+                result = collect(
+                    now=NOW,
+                    state_dir=root,
+                    version_path=version_path,
+                    transport=_accepting_transport(b'{"planUsage":{"autoPercentUsed":1}}'),
+                )
+            assert isinstance(result, ProviderCollectionFailure)
+            assert result.category == "not_installed"
+            assert result.code == code
+            assert FAKE_SECRET not in result.message
+
+
+@pytest.mark.parametrize(
+    ("status", "category", "retryable"),
+    [(401, "auth_expired", False), (403, "upstream", False), (503, "upstream", True)],
+)
+def test_urllib_and_injected_transport_share_http_status_policy(
+    status: int,
+    category: str,
+    retryable: bool,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_state(tmp_path, token=FAKE_SECRET)
+
+    def transport(request: PreparedRequest, *, deadline_seconds: float) -> TransportResponse:
+        del request, deadline_seconds
+        return TransportResponse(status=status, body=FAKE_SECRET.encode("utf-8"))
+
+    injected = collect(
+        now=NOW,
+        state_dir=tmp_path,
+        client_version="9.9.9",
+        transport=transport,
+    )
+
+    class _RaisingOpener:
+        def open(self, request: urllib.request.Request, timeout: float | None = None) -> object:
+            del timeout
+            raise urllib.error.HTTPError(
+                request.full_url,
+                status,
+                FAKE_SECRET,
+                email.message.Message(),
+                None,
+            )
+
+    monkeypatch.setattr(
+        urllib.request,
+        "build_opener",
+        lambda *_handlers: _RaisingOpener(),
+    )
+    produced = urllib_transport(
+        PreparedRequest(
+            url="https://example.invalid/GetCurrentPeriodUsage", body=b"{}", headers=()
+        ),
+        deadline_seconds=1,
+    )
+
+    assert isinstance(injected, ProviderCollectionFailure)
+    assert isinstance(produced, ProviderCollectionFailure)
+    assert injected.category == produced.category == category
+    assert injected.retryable is produced.retryable is retryable
+    assert FAKE_SECRET not in injected.message
+    assert FAKE_SECRET not in produced.message
 
 
 def test_cli_without_live_does_not_read_cursor_state() -> None:

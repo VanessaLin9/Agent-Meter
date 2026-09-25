@@ -53,8 +53,9 @@
 - 401／明確 token expiry → `auth_expired`。
 - Deadline exceeded → `timeout`。
 - DNS／connection failure → `network`。
-- Non-success upstream response → `upstream`。
-- JSON／required field／unit 不符 → `malformed_response`。
+- HTTP 401 → `auth_expired`，不 retry。
+- HTTP 5xx → `upstream`，`retryable=true`。其他 non-200（含 4xx）→ `upstream`，`retryable=false`。Production client 與 injected transport 共用這個對應。
+- JSON 必須是單一 RFC 8259 value。超大整數、過深巢狀、`NaN`／`Infinity`、trailing data 都是 `malformed_response`；`storage.json` 與 client version 的同類失敗回 `not_installed`。不得把解析例外傳出 adapter。
 
 Last-good fallback 由 orchestrator 負責；Cursor schema/auth 失敗不得影響 Codex 或 Claude。
 

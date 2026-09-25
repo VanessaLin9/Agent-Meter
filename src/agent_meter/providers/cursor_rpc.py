@@ -22,7 +22,7 @@ import urllib.request
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import NoReturn, Protocol
 from urllib.parse import quote
 
 from agent_meter.cache import ProviderCollectionFailure
@@ -53,7 +53,6 @@ _FAILURE_MESSAGES = {
 _RETRYABLE = {
     "deadline_exceeded": True,
     "connection_failed": True,
-    "upstream_http_error": True,
 }
 
 
@@ -180,14 +179,40 @@ def urllib_transport(
     except urllib.error.HTTPError as exc:
         status = exc.code
         exc.close()
-        if status == 401:
-            return _failure("token_rejected", "auth_expired")
+        mapped = map_http_status(status)
+        if mapped is not None:
+            return mapped
         return _failure("upstream_http_error", "upstream")
     except (urllib.error.URLError, OSError):
         return _failure("connection_failed", "network")
     if len(body) > _MAX_RESPONSE_BYTES:
         return _failure("response_too_large", "malformed_response")
+    mapped = map_http_status(status)
+    if mapped is not None:
+        return mapped
     return TransportResponse(status=status, body=body)
+
+
+def map_http_status(status: int) -> ProviderCollectionFailure | None:
+    """Map a non-200 HTTP status. 200 returns None so the body can be parsed.
+
+    401 is `auth_expired`. Production urllib and injected transports both use
+    this function so a 4xx response cannot be marked retryable by only one path.
+    """
+
+    if status == 200:
+        return None
+    if status == 401:
+        return _failure("token_rejected", "auth_expired")
+    # PROVIDER: 只有 5xx 值得 retry。403 這類 4xx 重送不會變成功（PR #6）。
+    return ProviderCollectionFailure(
+        provider_id=CURSOR_PROVIDER_ID,
+        source=CURSOR_SOURCE,
+        category="upstream",
+        message=_FAILURE_MESSAGES["upstream_http_error"],
+        retryable=status >= 500,
+        code="upstream_http_error",
+    )
 
 
 def decode_period_usage_body(
@@ -201,11 +226,33 @@ def decode_period_usage_body(
         text = body.decode("utf-8")
     except UnicodeError:
         return _failure("malformed_json", "malformed_response")
-    try:
-        payload: object = json.loads(text)
-    except json.JSONDecodeError:
+    payload = _decode_json_text(text)
+    if payload is None:
         return _failure("malformed_json", "malformed_response")
     return payload
+
+
+def _decode_json_text(text: str) -> object | None:
+    """Parse one JSON value. Invalid, nonstandard, or unsafe input returns None."""
+
+    stripped = text.strip()
+    if not stripped:
+        return None
+    decoder = json.JSONDecoder(parse_constant=_reject_nonstandard_constant)
+    try:
+        parsed, end = decoder.raw_decode(stripped)
+    except (json.JSONDecodeError, ValueError, RecursionError):
+        # CONTRACT: 超大整數是 ValueError，過深巢狀是 RecursionError。
+        # NaN／Infinity 不是 RFC 8259，不能進 success（PR #6）。
+        return None
+    if stripped[end:].strip():
+        return None
+    value: object = parsed
+    return value
+
+
+def _reject_nonstandard_constant(_literal: str) -> NoReturn:
+    raise ValueError("non-standard JSON constant")
 
 
 class _RejectRedirects(urllib.request.HTTPRedirectHandler):
@@ -254,9 +301,10 @@ def _read_machine_ids(storage_path: Path) -> tuple[str, str] | ProviderCollectio
     if not storage_path.is_file():
         return _failure("missing_local_state", "not_installed")
     try:
-        payload = json.loads(storage_path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError):
+        text = storage_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
         return _failure("unreadable_local_state", "not_installed")
+    payload = _decode_json_text(text)
     if not isinstance(payload, dict):
         return _failure("unreadable_local_state", "not_installed")
     machine_id = _header_value(payload, _MACHINE_ID_KEY)
@@ -268,9 +316,10 @@ def _read_machine_ids(storage_path: Path) -> tuple[str, str] | ProviderCollectio
 
 def _read_client_version(path: Path) -> str | ProviderCollectionFailure:
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, UnicodeError, json.JSONDecodeError):
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
         return _failure("missing_client_version", "not_installed")
+    payload = _decode_json_text(text)
     if not isinstance(payload, dict):
         return _failure("missing_client_version", "not_installed")
     version = payload.get("version")
@@ -300,10 +349,7 @@ def _decode_token(value: object) -> str | None:
         return None
     text = text.strip()
     if text.startswith('"'):
-        try:
-            decoded = json.loads(text)
-        except json.JSONDecodeError:
-            return None
+        decoded = _decode_json_text(text)
         if not isinstance(decoded, str):
             return None
         text = decoded
