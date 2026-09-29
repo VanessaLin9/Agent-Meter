@@ -39,7 +39,7 @@ Authentication 由 Claude Code 管理。Ingestion command 不讀取、不保存 
 
 本 ingest command 只從 stdin 解析 structured data，因此目前只產生 `malformed_response`（empty、oversized、malformed JSON、缺少 `rate_limits`、或沒有合法 meter）。`not_configured`、`not_authenticated` 與 cache write `internal` 留給 orchestrator／後續 handoff，不在本 module 發明假資料。
 
-Last-good fallback 由 orchestrator 依 typed failure 決定；adapter 不寫 cache。
+Last-good fallback 由 orchestrator 依 typed failure 決定；adapter 不寫 cache。`python -m agent_meter --live --claude-statusline <file>` 會讀這個 JSON 檔；未提供時 Claude 為 `unavailable`，不阻擋 Codex／Cursor。
 
 ## Offline fixtures
 
