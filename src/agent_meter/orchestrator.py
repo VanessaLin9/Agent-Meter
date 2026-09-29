@@ -23,7 +23,7 @@ import tempfile
 import time
 from collections.abc import Mapping
 from pathlib import Path
-from typing import BinaryIO, Protocol, TextIO
+from typing import BinaryIO, Protocol, TextIO, cast, get_args
 
 from agent_meter.aggregation import build_snapshot
 from agent_meter.cache import (
@@ -64,6 +64,21 @@ _PROVIDER_SOURCES: dict[str, str] = {
     CLAUDE_PROVIDER_ID: CLAUDE_SOURCE,
     CODEX_PROVIDER_ID: CODEX_SOURCE,
     CURSOR_PROVIDER_ID: CURSOR_SOURCE,
+}
+_ERROR_CATEGORIES: frozenset[str] = frozenset(get_args(ErrorCategory))
+# SECURITY: typed failure 的 message／code 可能含 adapter 原文。邊界只保留
+# category 與 retryable，字串一律 orchestrator-owned，不做 token regex（PR #7）。
+_SAFE_FAILURE_MESSAGES: dict[ErrorCategory, str] = {
+    "not_configured": "Provider is not configured",
+    "not_installed": "Provider is not installed",
+    "not_authenticated": "Provider is not authenticated",
+    "auth_expired": "Provider authentication expired",
+    "timeout": "Provider collection timed out",
+    "network": "Provider request failed due to a network error",
+    "upstream": "Provider upstream request failed",
+    "malformed_response": "Provider response was unusable",
+    "cache": "Provider cache operation failed",
+    "internal": "Provider collection failed",
 }
 
 # SECURITY: live Codex/Cursor access is opt-in. Default CLI must not spawn
@@ -227,60 +242,54 @@ def _invoke_collector(
         result = collector(now=now, deadline_seconds=deadline_seconds)
     except TimeoutError:
         # SECURITY: 不得 stringify TimeoutError；message 可能含 planted secret（PR #7）。
-        return _isolated_failure(
-            provider_id,
-            category="timeout",
-            message="Provider collection timed out",
-            retryable=True,
-            code="deadline_exceeded",
-        )
+        return _boundary_failure(provider_id, category="timeout", retryable=True)
     except Exception:
         # FALLBACK: unexpected throw 只讓該 provider 失敗，不得中斷其他 collect（PR #7）。
         # SECURITY: 不把 exception 或 traceback locals 寫進 snapshot／stderr（PR #7）。
-        return _isolated_failure(
-            provider_id,
-            category="internal",
-            message="Provider collection failed",
-            retryable=True,
-            code="collector_exception",
-        )
+        return _boundary_failure(provider_id, category="internal", retryable=True)
     if not isinstance(result, (ProviderCollectionSuccess, ProviderCollectionFailure)):
         # FALLBACK: 非 typed result 當 malformed，避免 0% 或 raw dict 進 snapshot（PR #7）。
-        return _isolated_failure(
-            provider_id,
-            category="malformed_response",
-            message="Provider collector returned an unusable result",
-            retryable=False,
-            code="untyped_result",
-        )
+        return _boundary_failure(provider_id, category="malformed_response", retryable=False)
     if result.provider_id != provider_id:
         # CONTRACT: collector 不能把結果寫進別的 provider key（PR #7）。
-        return _isolated_failure(
-            provider_id,
-            category="internal",
-            message="Provider result id mismatch",
-            retryable=False,
-            code="provider_id_mismatch",
-        )
+        return _boundary_failure(provider_id, category="internal", retryable=False)
+    if isinstance(result, ProviderCollectionFailure):
+        return _sanitize_typed_failure(provider_id, result)
     return result
 
 
-def _isolated_failure(
+def _sanitize_typed_failure(
+    provider_id: str, result: ProviderCollectionFailure
+) -> ProviderCollectionFailure:
+    """Replace adapter-supplied strings. Keep category and retryable when valid."""
+
+    return _boundary_failure(
+        provider_id,
+        category=_safe_category(result.category),
+        retryable=result.retryable if type(result.retryable) is bool else True,
+    )
+
+
+def _boundary_failure(
     provider_id: str,
     *,
     category: ErrorCategory,
-    message: str,
     retryable: bool,
-    code: str,
 ) -> ProviderCollectionFailure:
+    safe_category = _safe_category(category)
     return ProviderCollectionFailure(
         provider_id=provider_id,
         source=_source_for(provider_id),
-        category=category,
-        message=message,
+        category=safe_category,
+        message=_SAFE_FAILURE_MESSAGES[safe_category],
         retryable=retryable,
-        code=code,
     )
+
+
+def _safe_category(value: object) -> ErrorCategory:
+    if isinstance(value, str) and value in _ERROR_CATEGORIES:
+        return cast(ErrorCategory, value)
+    return "internal"
 
 
 def _source_for(provider_id: str) -> str:
