@@ -34,7 +34,7 @@
 - Connect RPC：`POST https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage`，body `{}`。
 - Checksum header 目前依 feasibility record：`00000000` + machineId + `/` + macMachineId。
 - Redirect 不跟隨，避免把 `Authorization` 送到另一個 host。
-- Deadline 預設 10 秒，涵蓋 connect 與 body read 的整體 monotonic 時限，不只是 socket inactivity timeout。`deadline_seconds <= 0` 直接回 `timeout`，不送 request。`TimeoutError` 與 `URLError` 包住的 `TimeoutError` 都對成 `timeout`，不得誤判成 `network`。
+- Deadline 預設 10 秒，涵蓋 connect 與 body read 的整體 monotonic 時限，不只是 socket inactivity timeout。Body 用 `read1`，在每個 available chunk 之間重算剩餘時間；不得用會內部多次 socket read 的 `HTTPResponse.read(size)`。`deadline_seconds <= 0` 直接回 `timeout`，不送 request。`TimeoutError` 與 `URLError` 包住的 `TimeoutError` 都對成 `timeout`，不得誤判成 `network`。
 - Token、machine id、client version 必須能以 latin-1 放進 HTTP header。無法編碼的字元在組 request 前拒絕，不得讓 `UnicodeEncodeError` 離開 adapter。
 
 ## Field behavior
