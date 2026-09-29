@@ -20,7 +20,7 @@ Normalized usage models、aggregation／stale policy、Claude Code status-line a
 uv run --locked python -m agent_meter --live --output usage.json
 ```
 
-`--live` 會啟動 Codex app-server、唯讀 Cursor local session 並呼叫 unofficial Connect RPC（不 refresh token）。Claude 是 event-driven status-line JSON，需另外提供檔案；沒給時 Claude 為 `unavailable`，其餘 provider 照常收集：
+`--live` 會啟動 Codex app-server、唯讀 Cursor local session 並呼叫 unofficial Connect RPC（不 refresh token）。Codex provider 是 optional dependency，需要 `codex` 位於 `PATH`。Claude 是 event-driven status-line JSON，需另外提供檔案；沒給時 Claude 為 `unavailable`，其餘 provider 照常收集：
 
 ```bash
 uv run --locked python -m agent_meter --live --claude-statusline path/to/statusline.json
