@@ -34,7 +34,8 @@
 - Connect RPC：`POST https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage`，body `{}`。
 - Checksum header 目前依 feasibility record：`00000000` + machineId + `/` + macMachineId。
 - Redirect 不跟隨，避免把 `Authorization` 送到另一個 host。
-- Deadline 預設 10 秒。`deadline_seconds <= 0` 直接回 `timeout`，不送 request。`TimeoutError` 與 `URLError` 包住的 `TimeoutError` 都對成 `timeout`，不得誤判成 `network`。
+- Deadline 預設 10 秒，涵蓋 connect 與 body read 的整體 monotonic 時限，不只是 socket inactivity timeout。`deadline_seconds <= 0` 直接回 `timeout`，不送 request。`TimeoutError` 與 `URLError` 包住的 `TimeoutError` 都對成 `timeout`，不得誤判成 `network`。
+- Token、machine id、client version 必須能以 latin-1 放進 HTTP header。無法編碼的字元在組 request 前拒絕，不得讓 `UnicodeEncodeError` 離開 adapter。
 
 ## Field behavior
 
@@ -76,6 +77,14 @@ uv run --locked python -m agent_meter.providers.cursor --live
 4. 與 Cursor Settings 的 Usage／Spending 比對：quota remaining 允許 1 percentage point 以內的 rounding 差；on-demand 有顯示時比對 USD 金額。
 5. 關閉 Cursor IDE 後重試一次；只要 local session 仍在，應仍可取值。
 6. 確認 stdout、stderr 與任何 exception 都不含 token、machine ID、checksum 或 raw response。
+
+## Manual smoke test record
+
+- 日期：2026-09-29。Command：`uv run --locked python -m agent_meter.providers.cursor --live`。
+- Cursor IDE 開啟時：success。stderr 說明 read-only、不 refresh；stdout 僅 normalized dump。
+- Cursor 完全關閉後，由外部 Terminal 再跑一次：success。沿用既有 local session，沒有額外 OAuth。
+- 兩次 Cursor Models remaining 約 69.8%，Other Models remaining 100%，與 Settings Usage 差在 1 percentage point 以內。
+- 兩次都省略 `reset_at` 與 on-demand spend。stdout／stderr 未出現 token、machine id、checksum 或 raw upstream body。
 
 ## Upgrade signals
 

@@ -17,12 +17,13 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import time
 import urllib.error
 import urllib.request
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import NoReturn, Protocol
+from typing import NoReturn, Protocol, cast
 from urllib.parse import quote
 
 from agent_meter.cache import ProviderCollectionFailure
@@ -32,6 +33,7 @@ CURSOR_PROVIDER_ID = "cursor"
 CURSOR_SOURCE = "cursor_dashboard_connect_rpc"
 DEFAULT_DEADLINE_SECONDS = 10.0
 _MAX_RESPONSE_BYTES = 1_048_576
+_READ_CHUNK_BYTES = 8_192
 _PERIOD_USAGE_URL = "https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage"
 _TOKEN_KEY = "cursorAuth/accessToken"
 _MACHINE_ID_KEY = "telemetry.machineId"
@@ -48,6 +50,7 @@ _FAILURE_MESSAGES = {
     "upstream_http_error": "Cursor period-usage request was not successful",
     "response_too_large": "Cursor period-usage response exceeds the size limit",
     "malformed_json": "Cursor period-usage response is not valid JSON",
+    "unsendable_headers": "Cursor request headers cannot be sent",
 }
 
 _RETRYABLE = {
@@ -163,17 +166,25 @@ def urllib_transport(
 
     if deadline_seconds <= 0:
         return _failure("deadline_exceeded", "timeout")
+    deadline = time.monotonic() + deadline_seconds
     opener = urllib.request.build_opener(_RejectRedirects())
-    outgoing = urllib.request.Request(
-        request.url,
-        data=request.body,
-        headers=dict(request.headers),
-        method="POST",
-    )
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        return _failure("deadline_exceeded", "timeout")
     try:
-        with opener.open(outgoing, timeout=deadline_seconds) as response:
+        outgoing = urllib.request.Request(
+            request.url,
+            data=request.body,
+            headers=dict(request.headers),
+            method="POST",
+        )
+        with opener.open(outgoing, timeout=remaining) as response:
             status = int(response.status)
-            body = response.read(_MAX_RESPONSE_BYTES + 1)
+            body = _read_response_body(response, deadline=deadline)
+    except UnicodeEncodeError:
+        # SECURITY: http.client 用 latin-1 編碼 header。無法編碼的字元不得
+        # 以 traceback 離開 adapter（PR #6）。
+        return _failure("unsendable_headers", "internal")
     except TimeoutError:
         return _failure("deadline_exceeded", "timeout")
     except urllib.error.HTTPError as exc:
@@ -192,12 +203,57 @@ def urllib_transport(
         return _failure("connection_failed", "network")
     except OSError:
         return _failure("connection_failed", "network")
-    if len(body) > _MAX_RESPONSE_BYTES:
-        return _failure("response_too_large", "malformed_response")
+    if isinstance(body, ProviderCollectionFailure):
+        return body
     mapped = map_http_status(status)
     if mapped is not None:
         return mapped
     return TransportResponse(status=status, body=body)
+
+
+def _read_response_body(response: object, *, deadline: float) -> bytes | ProviderCollectionFailure:
+    """Read the body in chunks so a slow-drip peer cannot outrun the deadline."""
+
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return _failure("deadline_exceeded", "timeout")
+        _set_response_timeout(response, remaining)
+        try:
+            readable = cast(_Readable, response)
+            piece = readable.read(min(_READ_CHUNK_BYTES, _MAX_RESPONSE_BYTES + 1 - total))
+        except TimeoutError:
+            return _failure("deadline_exceeded", "timeout")
+        except OSError:
+            return _failure("connection_failed", "network")
+        # CONTRACT: socket inactivity timeout 不夠。chunk 回來後仍要用
+        # monotonic clock 卡死整體 deadline（PR #6）。
+        if time.monotonic() >= deadline:
+            return _failure("deadline_exceeded", "timeout")
+        if not piece:
+            break
+        if not isinstance(piece, bytes):
+            return _failure("malformed_json", "malformed_response")
+        chunks.append(piece)
+        total += len(piece)
+        if total > _MAX_RESPONSE_BYTES:
+            return _failure("response_too_large", "malformed_response")
+    return b"".join(chunks)
+
+
+class _Readable(Protocol):
+    def read(self, size: int = -1) -> bytes: ...
+
+
+def _set_response_timeout(response: object, timeout: float) -> None:
+    fp = getattr(response, "fp", None)
+    raw = getattr(fp, "raw", None)
+    sock = getattr(raw, "_sock", None)
+    setter = getattr(sock, "settimeout", None)
+    if callable(setter):
+        setter(timeout)
 
 
 def map_http_status(status: int) -> ProviderCollectionFailure | None:
@@ -366,7 +422,17 @@ def _decode_token(value: object) -> str | None:
 
 
 def _usable_header_value(value: str, *, max_length: int) -> bool:
-    return 1 <= len(value) <= max_length and "\n" not in value and "\r" not in value
+    if not 1 <= len(value) <= max_length:
+        return False
+    if "\r" in value or "\n" in value:
+        return False
+    try:
+        # PROVIDER: http.client putheader 用 latin-1。CJK 等無法編碼的字元
+        # 必須在送 request 前拒絕，不能讓 UnicodeEncodeError 逃出（PR #6）。
+        value.encode("latin-1")
+    except UnicodeEncodeError:
+        return False
+    return True
 
 
 def _failure(code: str, category: ErrorCategory) -> ProviderCollectionFailure:
