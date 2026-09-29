@@ -24,7 +24,7 @@
 - Access token、machine identifier 與 checksum 只存在 `cursor_rpc.build_request` 到 transport 送出這段。`PreparedRequest` 的 repr 會遮住 headers。
 - Client version 預設讀 `/Applications/Cursor.app/Contents/Resources/app/package.json` 的 `version`。Tests 可注入。
 - 不得 log、cache、fixture 或回傳 token、machine id、checksum 或 raw response。
-- Token refresh 若會修改 Cursor-owned state，必須由獨立 task 明確授權；v0.1 遇到 401 回傳 `auth_expired`。
+- Token refresh 若會修改 Cursor-owned state，必須由獨立 task 明確授權。v0.1 不呼叫 refresh endpoint；401 回傳 `auth_expired`，local files 維持原樣。
 - Cursor IDE 關閉時，只要既有 local session 有效，adapter 應仍可運作。
 
 ## Command
@@ -34,7 +34,7 @@
 - Connect RPC：`POST https://api2.cursor.sh/aiserver.v1.DashboardService/GetCurrentPeriodUsage`，body `{}`。
 - Checksum header 目前依 feasibility record：`00000000` + machineId + `/` + macMachineId。
 - Redirect 不跟隨，避免把 `Authorization` 送到另一個 host。
-- Deadline 預設 10 秒。`deadline_seconds <= 0` 直接回 `timeout`，不送 request。
+- Deadline 預設 10 秒。`deadline_seconds <= 0` 直接回 `timeout`，不送 request。`TimeoutError` 與 `URLError` 包住的 `TimeoutError` 都對成 `timeout`，不得誤判成 `network`。
 
 ## Field behavior
 
@@ -65,11 +65,17 @@ Sanitized fixtures 在 `tests/fixtures/providers/cursor/`。`happy.json` 植入 
 
 ## Manual smoke test
 
-1. 說明將唯讀使用 Cursor local login state 並發出 network request。
-2. 執行 adapter，只顯示 normalized values。
-3. 與 Cursor Settings 的 Usage/Spending 值在約定 rounding tolerance 內比對。
-4. 關閉 Cursor IDE 後重試一次。
-5. 確認 log 與 error 不含 token、machine ID、checksum 或 raw response。
+1. 確認本機已登入 Cursor。`--live` 會唯讀 local session，並對 `api2.cursor.sh` 發出 `GetCurrentPeriodUsage`。不會 refresh token，也不會寫 Cursor 設定。
+2. 執行：
+
+```bash
+uv run --locked python -m agent_meter.providers.cursor --live
+```
+
+3. stderr 應說明 read-only／不 refresh。stdout 只應是 normalized dump。
+4. 與 Cursor Settings 的 Usage／Spending 比對：quota remaining 允許 1 percentage point 以內的 rounding 差；on-demand 有顯示時比對 USD 金額。
+5. 關閉 Cursor IDE 後重試一次；只要 local session 仍在，應仍可取值。
+6. 確認 stdout、stderr 與任何 exception 都不含 token、machine ID、checksum 或 raw response。
 
 ## Upgrade signals
 
