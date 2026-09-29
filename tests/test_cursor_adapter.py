@@ -13,6 +13,7 @@ import math
 import sqlite3
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -850,3 +851,104 @@ def test_cli_live_failure_stderr_stays_sanitized(monkeypatch: pytest.MonkeyPatch
     assert "auth_expired" in stderr.getvalue()
     assert FAKE_SECRET not in stdout.getvalue()
     assert FAKE_SECRET not in stderr.getvalue()
+
+
+def test_slow_response_read_exceeds_overall_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _Response:
+        status = 200
+
+        def read(self, size: int) -> bytes:
+            del size
+            time.sleep(0.2)
+            return b'{"planUsage":{"autoPercentUsed":1}}'
+
+        def __enter__(self) -> _Response:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+    class _Opener:
+        def open(self, request: urllib.request.Request, timeout: float | None = None) -> _Response:
+            del request, timeout
+            return _Response()
+
+    monkeypatch.setattr(urllib.request, "build_opener", lambda *_handlers: _Opener())
+    result = urllib_transport(_dummy_request(), deadline_seconds=0.01)
+    assert isinstance(result, ProviderCollectionFailure)
+    assert result.category == "timeout"
+    assert result.code == "deadline_exceeded"
+    assert FAKE_SECRET not in result.message
+
+
+def test_non_latin1_session_values_fail_before_request(tmp_path: Path) -> None:
+    unsafe = "密碼"
+
+    def forbidden_transport(
+        request: PreparedRequest, *, deadline_seconds: float
+    ) -> TransportResponse:
+        del request, deadline_seconds
+        raise AssertionError("unsendable headers must not reach transport")
+
+    token_dir = tmp_path / "token"
+    _write_state(token_dir, token=unsafe)
+    token = collect(
+        now=NOW,
+        state_dir=token_dir,
+        client_version="9.9.9",
+        transport=forbidden_transport,
+    )
+    assert isinstance(token, ProviderCollectionFailure)
+    assert token.category == "not_authenticated"
+    assert unsafe not in token.message
+
+    machine_dir = tmp_path / "machine"
+    _write_state(machine_dir, token=FAKE_SECRET)
+    (machine_dir / "storage.json").write_text(
+        json.dumps(
+            {
+                "telemetry.machineId": unsafe,
+                "telemetry.macMachineId": "mac-a",
+            }
+        ),
+        encoding="utf-8",
+    )
+    machine = collect(
+        now=NOW,
+        state_dir=machine_dir,
+        client_version="9.9.9",
+        transport=forbidden_transport,
+    )
+    assert isinstance(machine, ProviderCollectionFailure)
+    assert machine.category == "not_installed"
+    assert unsafe not in machine.message
+
+    version_dir = tmp_path / "version"
+    _write_state(version_dir, token=FAKE_SECRET)
+    version = collect(
+        now=NOW,
+        state_dir=version_dir,
+        client_version=unsafe,
+        transport=forbidden_transport,
+    )
+    assert isinstance(version, ProviderCollectionFailure)
+    assert version.category == "not_installed"
+    assert version.code == "missing_client_version"
+    assert unsafe not in version.message
+
+
+def test_urllib_unsendable_headers_are_internal_without_raising() -> None:
+    unsafe = "密碼"
+    result = urllib_transport(
+        PreparedRequest(
+            url="https://example.invalid/GetCurrentPeriodUsage",
+            body=b"{}",
+            headers=(("Authorization", f"Bearer {unsafe}"),),
+        ),
+        deadline_seconds=1,
+    )
+    assert isinstance(result, ProviderCollectionFailure)
+    assert result.category == "internal"
+    assert result.code == "unsendable_headers"
+    assert unsafe not in result.message
+    assert FAKE_SECRET not in result.message
