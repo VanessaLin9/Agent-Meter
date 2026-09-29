@@ -348,6 +348,47 @@ def test_malformed_adapter_output_does_not_rewrite_other_providers() -> None:
     assert FAKE_SECRET not in json.dumps(dumped)
 
 
+def test_typed_failure_secret_is_absent_from_stderr_snapshot_and_file(tmp_path: Path) -> None:
+    stderr = io.StringIO()
+    snapshot = collect_snapshot(
+        {
+            "claude": _constant(_claude_ok()),
+            "codex": _constant(
+                ProviderCollectionFailure(
+                    provider_id=CODEX_PROVIDER_ID,
+                    source=FAKE_SECRET,
+                    category="timeout",
+                    message=FAKE_SECRET,
+                    retryable=True,
+                    code=FAKE_SECRET,
+                )
+            ),
+            "cursor": _constant(_cursor_ok()),
+        },
+        now=NOW,
+        settings=StaleSettings(),
+        stderr=stderr,
+    )
+    output = tmp_path / "usage.json"
+    write_usage_snapshot(output, snapshot)
+
+    dumped = _assert_schema_valid(snapshot)
+    failed = snapshot.providers["codex"]
+    assert isinstance(failed, ProviderError)
+    assert failed.error.category == "timeout"
+    assert failed.error.retryable is True
+    assert failed.source == CODEX_SOURCE
+    diagnostic = stderr.getvalue()
+    serialized = json.dumps(dumped)
+    file_text = output.read_text(encoding="utf-8")
+    assert FAKE_SECRET not in diagnostic
+    assert FAKE_SECRET not in serialized
+    assert FAKE_SECRET not in file_text
+    assert FAKE_SECRET not in failed.error.message
+    assert getattr(failed.error, "code", None) != FAKE_SECRET
+    assert "code" not in dumped["providers"]["codex"]["error"]
+
+
 def test_untyped_adapter_output_becomes_isolated_failure() -> None:
     def garbage(*, now: int, deadline_seconds: float) -> object:
         del now, deadline_seconds
