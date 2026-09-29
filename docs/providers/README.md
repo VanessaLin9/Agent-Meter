@@ -1,6 +1,6 @@
 # Provider Documentation
 
-每個 v0.1 provider 在開始實作 adapter 時，都要新增一份 `<provider>.md`。這裡記錄 upstream integration contract，不記錄真實 credential 或 live response。Claude Code parser、Codex app-server adapter 與 Cursor Connect RPC adapter 已落地，見 `claude.md`、`codex.md` 與 `cursor.md`。
+每個 v0.1 provider 在開始實作 adapter 時，都要新增一份 `<provider>.md`。這裡記錄 upstream integration contract，不記錄真實 credential 或 live response。Claude Code parser、Codex app-server adapter 與 Cursor Connect RPC adapter 已落地，見 `claude.md`、`codex.md` 與 `cursor.md`。一次收集三個 provider 並寫出 `usage.json` 由 `python -m agent_meter --live` 負責。
 
 ## Required template
 
