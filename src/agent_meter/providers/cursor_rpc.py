@@ -223,7 +223,9 @@ def _read_response_body(response: object, *, deadline: float) -> bytes | Provide
         _set_response_timeout(response, remaining)
         try:
             readable = cast(_Readable, response)
-            piece = readable.read(min(_READ_CHUNK_BYTES, _MAX_RESPONSE_BYTES + 1 - total))
+            # CONTRACT: HTTPResponse.read(size) 會在內部多次 socket read。
+            # 必須用 read1，才能在每個 available chunk 之間重算剩餘期限（PR #6）。
+            piece = readable.read1(min(_READ_CHUNK_BYTES, _MAX_RESPONSE_BYTES + 1 - total))
         except TimeoutError:
             return _failure("deadline_exceeded", "timeout")
         except OSError:
@@ -244,7 +246,7 @@ def _read_response_body(response: object, *, deadline: float) -> bytes | Provide
 
 
 class _Readable(Protocol):
-    def read(self, size: int = -1) -> bytes: ...
+    def read1(self, size: int = -1) -> bytes: ...
 
 
 def _set_response_timeout(response: object, timeout: float) -> None:

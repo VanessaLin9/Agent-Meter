@@ -783,8 +783,12 @@ def test_oversized_urllib_body_is_malformed_without_echoing_secret(
     class _Response:
         status = 200
 
+        def read1(self, size: int = -1) -> bytes:
+            chunk = size if size > 0 else 8192
+            return FAKE_SECRET.encode("utf-8") + b"x" * chunk
+
         def read(self, size: int) -> bytes:
-            return FAKE_SECRET.encode("utf-8") + b"x" * size
+            raise AssertionError("deadline-bounded reads must use read1")
 
         def __enter__(self) -> _Response:
             return self
@@ -853,14 +857,20 @@ def test_cli_live_failure_stderr_stays_sanitized(monkeypatch: pytest.MonkeyPatch
     assert FAKE_SECRET not in stderr.getvalue()
 
 
-def test_slow_response_read_exceeds_overall_deadline(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_slow_drip_returns_timeout_within_bounded_elapsed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     class _Response:
         status = 200
 
-        def read(self, size: int) -> bytes:
+        def read1(self, size: int = -1) -> bytes:
             del size
-            time.sleep(0.2)
-            return b'{"planUsage":{"autoPercentUsed":1}}'
+            time.sleep(0.05)
+            return b"x"
+
+        def read(self, size: int = -1) -> bytes:
+            del size
+            raise AssertionError("HTTPResponse.read would wait for the full size")
 
         def __enter__(self) -> _Response:
             return self
@@ -874,10 +884,13 @@ def test_slow_response_read_exceeds_overall_deadline(monkeypatch: pytest.MonkeyP
             return _Response()
 
     monkeypatch.setattr(urllib.request, "build_opener", lambda *_handlers: _Opener())
+    started = time.monotonic()
     result = urllib_transport(_dummy_request(), deadline_seconds=0.01)
+    elapsed = time.monotonic() - started
     assert isinstance(result, ProviderCollectionFailure)
     assert result.category == "timeout"
     assert result.code == "deadline_exceeded"
+    assert elapsed < 0.2
     assert FAKE_SECRET not in result.message
 
 
