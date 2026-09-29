@@ -257,6 +257,11 @@ def main(argv: list[str] | None = None) -> int:
         # Cursor local state or send the access token（PR #6）。
         sys.stderr.write("cursor: live Connect RPC is opt-in; pass --live\n")
         return 2
+    # SECURITY: say what --live will do before reading the session. Do not
+    # print credential paths, token prefixes, or machine identifiers（PR #6）。
+    sys.stderr.write(
+        "cursor: read-only local session; posting GetCurrentPeriodUsage; token is not refreshed\n"
+    )
     result = collect(now=int(time.time()))
     sys.stdout.write(
         json.dumps(dump_collection_result(result), separators=(",", ":"), ensure_ascii=True)

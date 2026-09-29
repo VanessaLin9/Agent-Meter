@@ -183,7 +183,14 @@ def urllib_transport(
         if mapped is not None:
             return mapped
         return _failure("upstream_http_error", "upstream")
-    except (urllib.error.URLError, OSError):
+    except urllib.error.URLError as exc:
+        # urllib wraps socket timeouts as URLError. HTTPError is a URLError
+        # subclass and is handled above, so this branch is connect/read timeout
+        # or a real network failure（PR #6）。
+        if isinstance(exc.reason, TimeoutError):
+            return _failure("deadline_exceeded", "timeout")
+        return _failure("connection_failed", "network")
+    except OSError:
         return _failure("connection_failed", "network")
     if len(body) > _MAX_RESPONSE_BYTES:
         return _failure("response_too_large", "malformed_response")

@@ -7,6 +7,7 @@ Values are fictional. The transport tests inject a temporary state directory.
 from __future__ import annotations
 
 import email.message
+import io
 import json
 import math
 import sqlite3
@@ -655,3 +656,197 @@ def test_cli_without_live_does_not_read_cursor_state() -> None:
 
 def test_default_state_dir_points_at_cursor_global_storage() -> None:
     assert default_state_dir().name == "globalStorage"
+
+
+def test_http_401_does_not_refresh_or_write_local_state(tmp_path: Path) -> None:
+    database = _write_state(tmp_path, token=FAKE_SECRET)
+    before = database.read_bytes()
+    storage_before = (tmp_path / "storage.json").read_bytes()
+
+    def transport(request: PreparedRequest, *, deadline_seconds: float) -> TransportResponse:
+        del request, deadline_seconds
+        return TransportResponse(status=401, body=FAKE_SECRET.encode("utf-8"))
+
+    result = collect(
+        now=NOW,
+        state_dir=tmp_path,
+        client_version="9.9.9",
+        transport=transport,
+    )
+    assert isinstance(result, ProviderCollectionFailure)
+    assert result.category == "auth_expired"
+    assert result.retryable is False
+    assert FAKE_SECRET not in result.message
+    assert database.read_bytes() == before
+    assert (tmp_path / "storage.json").read_bytes() == storage_before
+
+
+def test_timeout_failure_does_not_write_local_state(tmp_path: Path) -> None:
+    database = _write_state(tmp_path, token=FAKE_SECRET)
+    before = database.read_bytes()
+
+    def transport(
+        request: PreparedRequest, *, deadline_seconds: float
+    ) -> ProviderCollectionFailure:
+        del request, deadline_seconds
+        return ProviderCollectionFailure(
+            provider_id=CURSOR_PROVIDER_ID,
+            source=CURSOR_SOURCE,
+            category="timeout",
+            message="Cursor period-usage request exceeded the deadline",
+            retryable=True,
+            code="deadline_exceeded",
+        )
+
+    result = collect(
+        now=NOW,
+        state_dir=tmp_path,
+        client_version="9.9.9",
+        transport=transport,
+    )
+    assert isinstance(result, ProviderCollectionFailure)
+    assert result.category == "timeout"
+    assert database.read_bytes() == before
+
+
+def _dummy_request() -> PreparedRequest:
+    return PreparedRequest(
+        url="https://example.invalid/GetCurrentPeriodUsage",
+        body=b"{}",
+        headers=(("Authorization", f"Bearer {FAKE_SECRET}"),),
+    )
+
+
+def test_urllib_timeout_error_is_timeout_without_echoing_reason(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _Opener:
+        def open(self, request: urllib.request.Request, timeout: float | None = None) -> object:
+            del request, timeout
+            raise TimeoutError(FAKE_SECRET)
+
+    monkeypatch.setattr(urllib.request, "build_opener", lambda *_handlers: _Opener())
+    result = urllib_transport(_dummy_request(), deadline_seconds=1)
+    assert isinstance(result, ProviderCollectionFailure)
+    assert result.category == "timeout"
+    assert result.retryable is True
+    assert result.code == "deadline_exceeded"
+    assert FAKE_SECRET not in result.message
+
+
+def test_urllib_urlerror_timeout_reason_is_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _Opener:
+        def open(self, request: urllib.request.Request, timeout: float | None = None) -> object:
+            del request, timeout
+            raise urllib.error.URLError(TimeoutError(FAKE_SECRET))
+
+    monkeypatch.setattr(urllib.request, "build_opener", lambda *_handlers: _Opener())
+    result = urllib_transport(_dummy_request(), deadline_seconds=1)
+    assert isinstance(result, ProviderCollectionFailure)
+    assert result.category == "timeout"
+    assert FAKE_SECRET not in result.message
+
+
+def test_urllib_urlerror_does_not_copy_reason(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _Opener:
+        def open(self, request: urllib.request.Request, timeout: float | None = None) -> object:
+            del request, timeout
+            raise urllib.error.URLError(FAKE_SECRET)
+
+    monkeypatch.setattr(urllib.request, "build_opener", lambda *_handlers: _Opener())
+    result = urllib_transport(_dummy_request(), deadline_seconds=1)
+    assert isinstance(result, ProviderCollectionFailure)
+    assert result.category == "network"
+    assert result.retryable is True
+    assert FAKE_SECRET not in result.message
+
+
+def test_prepared_request_repr_hides_authorization_and_checksum() -> None:
+    request = PreparedRequest(
+        url="https://example.invalid",
+        body=b"{}",
+        headers=(
+            ("Authorization", f"Bearer {FAKE_SECRET}"),
+            ("x-cursor-checksum", "00000000machine-a/mac-a"),
+        ),
+    )
+    rendered = repr(request)
+    assert rendered == "PreparedRequest(redacted)"
+    assert FAKE_SECRET not in rendered
+    assert "machine-a" not in rendered
+
+
+def test_oversized_urllib_body_is_malformed_without_echoing_secret(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _Response:
+        status = 200
+
+        def read(self, size: int) -> bytes:
+            return FAKE_SECRET.encode("utf-8") + b"x" * size
+
+        def __enter__(self) -> _Response:
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+    class _Opener:
+        def open(self, request: urllib.request.Request, timeout: float | None = None) -> _Response:
+            del request, timeout
+            return _Response()
+
+    monkeypatch.setattr(urllib.request, "build_opener", lambda *_handlers: _Opener())
+    result = urllib_transport(_dummy_request(), deadline_seconds=1)
+    assert isinstance(result, ProviderCollectionFailure)
+    assert result.category == "malformed_response"
+    assert result.code == "response_too_large"
+    assert FAKE_SECRET not in result.message
+
+
+def test_cli_live_announces_readonly_and_keeps_stdout_normalized(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    success = collect_period_usage(_fixture("happy.json"), now=NOW)
+    assert isinstance(success, ProviderCollectionSuccess)
+
+    def fake_collect(**kwargs: object) -> ProviderCollectionSuccess:
+        del kwargs
+        return success
+
+    monkeypatch.setattr("agent_meter.providers.cursor.collect", fake_collect)
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    monkeypatch.setattr(sys, "stdout", stdout)
+    monkeypatch.setattr(sys, "stderr", stderr)
+    assert main(["--live"]) == 0
+    assert "token is not refreshed" in stderr.getvalue()
+    dumped = stdout.getvalue()
+    assert '"result":"success"' in dumped
+    assert FAKE_SECRET not in dumped
+    assert FAKE_SECRET not in stderr.getvalue()
+
+
+def test_cli_live_failure_stderr_stays_sanitized(monkeypatch: pytest.MonkeyPatch) -> None:
+    failure = ProviderCollectionFailure(
+        provider_id=CURSOR_PROVIDER_ID,
+        source=CURSOR_SOURCE,
+        category="auth_expired",
+        message="Cursor rejected the local login state",
+        retryable=False,
+        code="token_rejected",
+    )
+
+    def fake_collect(**kwargs: object) -> ProviderCollectionFailure:
+        del kwargs
+        return failure
+
+    monkeypatch.setattr("agent_meter.providers.cursor.collect", fake_collect)
+    stdout = io.StringIO()
+    stderr = io.StringIO()
+    monkeypatch.setattr(sys, "stdout", stdout)
+    monkeypatch.setattr(sys, "stderr", stderr)
+    assert main(["--live"]) == 1
+    assert "auth_expired" in stderr.getvalue()
+    assert FAKE_SECRET not in stdout.getvalue()
+    assert FAKE_SECRET not in stderr.getvalue()
