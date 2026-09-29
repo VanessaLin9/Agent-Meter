@@ -1,4 +1,4 @@
-"""One-shot provider orchestration（usage.json integration）。
+"""One-shot provider orchestration（PR #7）。
 
 Responsibility: call configured adapters independently, merge typed results
 with domain policy, and write a gitignored schema-valid `usage.json`.
@@ -67,7 +67,7 @@ _PROVIDER_SOURCES: dict[str, str] = {
 }
 
 # SECURITY: live Codex/Cursor access is opt-in. Default CLI must not spawn
-# app-server, read Cursor session state, or wait on Claude stdin.
+# app-server, read Cursor session state, or wait on Claude stdin（PR #7）。
 
 
 class ProviderCollector(Protocol):
@@ -104,14 +104,14 @@ def collect_snapshot(
         _diagnose(stderr, provider_id, result)
         results.append(result)
     merged = merge_collection_results(previous or {}, results, settings=resolved_settings)
-    # CONTRACT: 設定的 provider 都要出現在 snapshot；空 map 不能假造 ok（本 PR）。
+    # CONTRACT: 設定的 provider 都要出現在 snapshot；空 map 不能假造 ok（PR #7）。
     return build_snapshot(merged, now=now)
 
 
 def write_usage_snapshot(path: Path, snapshot: UsageSnapshot) -> None:
     """Atomically replace `path` with schema-valid JSON. Do not log the payload."""
 
-    # SECURITY: 只寫 normalized snapshot。temp+replace 避免 reader 看到半份 JSON。
+    # SECURITY: 只寫 normalized snapshot。temp+replace 避免 reader 看到半份 JSON（PR #7）。
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = json.dumps(dump_usage_snapshot(snapshot), indent=2, ensure_ascii=True) + "\n"
     fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", suffix=".tmp", dir=path.parent)
@@ -174,7 +174,7 @@ def main(argv: list[str] | None = None) -> int:
         sys.stderr.write("agent_meter: live collection is opt-in; pass --live\n")
         return 2
 
-    # SECURITY: say what --live will do before any session read or network call.
+    # SECURITY: say what --live will do before any session read or network call（PR #7）。
     sys.stderr.write(
         "agent_meter: Codex spawns app-server; Cursor reads the local session and "
         "posts GetCurrentPeriodUsage without refreshing the token; Claude parses a "
@@ -191,6 +191,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         write_usage_snapshot(args.output, snapshot)
     except OSError:
+        # SECURITY: 寫檔失敗不回顯 path；可能含本機帳號目錄（PR #7）。
         sys.stderr.write("agent_meter: failed to write usage snapshot\n")
         sys.stdout.write(stdout_payload)
         sys.stdout.write("\n")
@@ -225,7 +226,7 @@ def _invoke_collector(
     try:
         result = collector(now=now, deadline_seconds=deadline_seconds)
     except TimeoutError:
-        # SECURITY: do not stringify TimeoutError; it may contain planted secrets.
+        # SECURITY: 不得 stringify TimeoutError；message 可能含 planted secret（PR #7）。
         return _isolated_failure(
             provider_id,
             category="timeout",
@@ -234,8 +235,8 @@ def _invoke_collector(
             code="deadline_exceeded",
         )
     except Exception:
-        # FALLBACK: unexpected throw 只讓該 provider 失敗，不得中斷其他 collect。
-        # SECURITY: 不把 exception 或 traceback locals 寫進 snapshot／stderr。
+        # FALLBACK: unexpected throw 只讓該 provider 失敗，不得中斷其他 collect（PR #7）。
+        # SECURITY: 不把 exception 或 traceback locals 寫進 snapshot／stderr（PR #7）。
         return _isolated_failure(
             provider_id,
             category="internal",
@@ -244,7 +245,7 @@ def _invoke_collector(
             code="collector_exception",
         )
     if not isinstance(result, (ProviderCollectionSuccess, ProviderCollectionFailure)):
-        # FALLBACK: 非 typed result 當 malformed，避免 0% 或 raw dict 進 snapshot。
+        # FALLBACK: 非 typed result 當 malformed，避免 0% 或 raw dict 進 snapshot（PR #7）。
         return _isolated_failure(
             provider_id,
             category="malformed_response",
@@ -253,7 +254,7 @@ def _invoke_collector(
             code="untyped_result",
         )
     if result.provider_id != provider_id:
-        # CONTRACT: collector 不能把結果寫進別的 provider key（本 PR）。
+        # CONTRACT: collector 不能把結果寫進別的 provider key（PR #7）。
         return _isolated_failure(
             provider_id,
             category="internal",
@@ -335,6 +336,7 @@ def _collect_claude_statusline(
     max_bytes: int = DEFAULT_MAX_STDIN_BYTES,
 ) -> ProviderCollectionSuccess | ProviderCollectionFailure:
     if path is None:
+        # FALLBACK: Claude 沒給 status-line 檔是 unavailable，不阻擋 Codex／Cursor（PR #7）。
         return ProviderCollectionFailure(
             provider_id=CLAUDE_PROVIDER_ID,
             source=CLAUDE_SOURCE,
@@ -350,7 +352,7 @@ def _collect_claude_statusline(
         with path.open("rb") as handle:
             raw = handle.read(max_bytes + 1)
     except OSError:
-        # SECURITY: 不把 filesystem path 寫進 error；可能含本機帳號目錄。
+        # SECURITY: 不把 filesystem path 寫進 error；可能含本機帳號目錄（PR #7）。
         return ProviderCollectionFailure(
             provider_id=CLAUDE_PROVIDER_ID,
             source=CLAUDE_SOURCE,
