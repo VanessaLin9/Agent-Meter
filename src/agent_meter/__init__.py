@@ -2,7 +2,7 @@
 
 Collector 可安裝 package 標記（PR #1）。Normalized snapshot models live in
 `agent_meter.models`（PR #2）。One-shot orchestration lives in
-`agent_meter.orchestrator`. This package still does not serve HTTP.
+`agent_meter.orchestrator`（PR #7）. This package still does not serve HTTP.
 
 Inputs: none. This module has no runtime I/O.
 Outputs: package metadata used by quality checks and later modules.
