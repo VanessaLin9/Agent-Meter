@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "snapshot_unavailable",
+    "message": "Usage snapshot is unavailable"
+  }
+}

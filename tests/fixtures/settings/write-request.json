@@ -1,0 +1,4 @@
+{
+  "expected_revision": 4,
+  "enabled_providers": ["claude"]
+}

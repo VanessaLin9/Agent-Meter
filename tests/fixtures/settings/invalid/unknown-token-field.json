@@ -1,0 +1,6 @@
+{
+  "settings_version": 1,
+  "revision": 1,
+  "enabled_providers": ["codex"],
+  "token": "PLANTED_PROVIDER_TOKEN_VALUE_DO_NOT_EMIT"
+}

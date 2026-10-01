@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "config_error",
+    "message": "Settings could not be read"
+  }
+}

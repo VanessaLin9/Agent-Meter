@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "save_failed",
+    "message": "Settings could not be saved"
+  }
+}

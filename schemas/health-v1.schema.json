@@ -1,0 +1,62 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-meter.local/schemas/health-v1.schema.json",
+  "title": "Agent Meter Health v1",
+  "description": "GET /health body. HTTP 200 means the process is up, not that providers are healthy.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["state"],
+  "properties": {
+    "state": {
+      "enum": ["idle", "ready", "degraded"]
+    },
+    "error": {
+      "$ref": "#/$defs/errorBody"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "state": {
+            "const": "degraded"
+          }
+        },
+        "required": ["state"]
+      },
+      "then": {
+        "required": ["error"]
+      },
+      "else": {
+        "not": {
+          "required": ["error"]
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "errorBody": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["code", "message"],
+      "properties": {
+        "code": {
+          "enum": [
+            "no_enabled_providers",
+            "snapshot_not_ready",
+            "snapshot_unavailable",
+            "config_error",
+            "revision_conflict",
+            "save_failed"
+          ]
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 240,
+          "pattern": "^[^\\r\\n]+$"
+        }
+      }
+    }
+  }
+}

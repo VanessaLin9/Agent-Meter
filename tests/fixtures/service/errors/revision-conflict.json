@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "revision_conflict",
+    "message": "Settings revision does not match"
+  }
+}

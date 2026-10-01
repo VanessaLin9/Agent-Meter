@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "no_enabled_providers",
+    "message": "No providers enabled"
+  }
+}

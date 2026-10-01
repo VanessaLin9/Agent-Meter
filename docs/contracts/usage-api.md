@@ -7,9 +7,13 @@ Machine-readable source: [`../../schemas/usage-v0.1.schema.json`](../../schemas/
 `GET /usage` 回傳 Collector 最新的 normalized snapshot。
 
 - 成功產生 schema-valid snapshot 時回傳 `200 OK`，即使 top-level `status` 是 `partial` 或 `error`。
-- 只有 Collector 無法產生任何 schema-valid response 時才回傳 `503 Service Unavailable`。
+- 下列情況回傳 `503 Service Unavailable` 與 error envelope（見 [`desktop-service.md`](desktop-service.md)），**不得**把該 body 當 usage snapshot 解析：
+  - `no_enabled_providers`：desktop settings 可讀且沒有任何 enabled provider。
+  - `snapshot_not_ready`：已啟用，但還沒有涵蓋整個 active set 的 snapshot。
+  - `snapshot_unavailable`：設定損壞，或內部無法產生任何 schema-valid snapshot。
 - Endpoint 本身不觸發同步 provider refresh，只讀取目前 memory/cache snapshot。
 - Response 不得包含 raw upstream response、credential、local account identifier 或 debug stack trace。
+- 本批 Local API 只 bind loopback；見 [`security-and-testing.md`](security-and-testing.md)。
 
 ## Top-level fields
 
@@ -24,7 +28,9 @@ Top-level aggregation：
 - `partial`：至少一個 provider 有可顯示資料，另有 provider 是 `stale`、`unavailable` 或 `error`。
 - `error`：沒有任何 provider 有可顯示資料。
 
-`unavailable` provider 是否算「已設定」，由 Collector configuration 決定；同一 configuration 下 aggregation 必須 deterministic。
+Desktop service 的「已設定」等於 `enabled_providers`。只有 enabled ID 出現在 `providers` map 並參與 top-level aggregation。停用的 provider 不得輸出 last-good，也不得刷新年齡。v0.1 schema 仍要求 `providers` 至少一個 key，所以空 enablement 走 503，不新增 `disabled` status、也不回空 map。
+
+One-shot CLI 仍以三個已整合 adapter 為 configured set；它不讀 desktop `settings.json`。
 
 ## Provider snapshot
 
@@ -80,6 +86,7 @@ Spend meter：
 - Refresh 失敗且存在 last-good data 時，保留原 meter 與原 `collected_at`，provider 改為 `stale` 並附 sanitized `error`。
 - Refresh 失敗不能用空 meter 覆蓋 last-good data。
 - Collector restart 後可從 atomic cache 恢復 last-good snapshot，但必須重新計算 stale 狀態。
+- Desktop service 停用某 provider 時，內部 last-good 可保留，但不得出現在 GET /usage，也不得把 `collected_at` 改成現在。
 
 ## Compatibility
 

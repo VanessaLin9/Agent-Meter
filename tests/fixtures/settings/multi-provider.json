@@ -1,0 +1,5 @@
+{
+  "settings_version": 1,
+  "revision": 4,
+  "enabled_providers": ["codex", "cursor"]
+}

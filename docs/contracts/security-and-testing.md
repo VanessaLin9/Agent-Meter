@@ -4,7 +4,9 @@
 
 - Provider-owned login state 是 sensitive input，只能在 Local Collector 的 adapter boundary 使用。
 - Normalized domain model、snapshot cache、HTTP API 與 ESP32 都是不含 credential 的區域。
-- Local API 預設只供 private LAN 使用；bind address 與 device authentication 尚未決定前，不得預設可安全暴露到 public network。
+- Batch 2 desktop API 只 bind `127.0.0.1`。不得 bind `0.0.0.0` 或 LAN。loopback 不是認證；它只降低遠端暴露。同源 UI 可以 `PUT /settings`，這是本批唯一使用者寫入能力，不得變成 wildcard CORS 或跨站可寫。
+- LAN bind 與 device authentication 仍未決定；在那之前不得預設可安全暴露到 private LAN 或 public network。
+- Settings 不含 provider token／session。Prefs、normalized cache 與 Claude mailbox 都在 checkout 外的使用者目錄。
 
 ## Never persist or emit
 
@@ -36,8 +38,9 @@ Error message 必須在 adapter boundary sanitized。若無法確定 upstream me
 - Cache 只能保存 schema-valid normalized snapshot。
 - 寫入必須 atomic，不能讓 reader 看到 partial JSON。
 - Cache file 不包含 raw response 或 credential。
+- Settings 目錄 `0700`、settings 檔 `0600`；拒絕不安全 symlink target。損壞或未知版本不得默默重設成全啟用。
 - Local runtime files 不進 Git；fixture 必須獨立人工建立。
-- 若未來需要保存敏感設定，必須另行決定 storage、permission 與 rotation policy。
+- 若未來需要保存敏感設定，必須另行決定 storage、permission 與 rotation policy。v1 settings 禁止 secret 欄位。
 
 ## CI tests
 
@@ -61,7 +64,8 @@ Error message 必須在 adapter boundary sanitized。若無法確定 upstream me
 - 使用明顯虛構的 timestamps、percentages、IDs 與 error messages。
 - 不從 live response 直接複製後只刪 token；應從契約重新手工建立最小 payload。
 - 在 error sanitization test 中可植入明顯 fake secret，並斷言結果完全不包含該字串。
-- Invalid fixtures 放在 `tests/fixtures/contracts/invalid/`，檔名描述預期違規。
+- Invalid usage fixtures 放在 `tests/fixtures/contracts/invalid/`，檔名描述預期違規。
+- Settings／health／error fixtures 放在 `tests/fixtures/settings/` 與 `tests/fixtures/service/`，不得放進 `tests/fixtures/contracts/*.json`，以免被 usage snapshot smoke tests 誤讀。
 
 ## Review checklist
 
