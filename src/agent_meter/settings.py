@@ -1,4 +1,4 @@
-"""Typed provider-enablement settings（desktop service contract）.
+"""Typed provider-enablement settings（desktop service contract；PR #8）.
 
 Responsibility: validate the persisted settings document and PUT body.
 Non-goals: filesystem I/O, HTTP, scheduler, or reading provider credentials.
@@ -48,7 +48,7 @@ class SettingsValidationError(ValueError):
     """Rejected settings payload. Message never includes the input document."""
 
     # SECURITY: pydantic ValidationError can echo planted secrets; callers
-    # must raise this wrapper and never stringify the cause.
+    # must raise this wrapper and never stringify the cause（PR #8）。
     code = "config_error"
 
     def __init__(self) -> None:
@@ -59,7 +59,7 @@ class Settings(ContractModel):
     """Persisted settings document and GET /settings body."""
 
     # SECURITY: extra="forbid" rejects token/path/account fields. There is no
-    # secret-bearing settings key in v1.
+    # secret-bearing settings key in v1（PR #8）。
     settings_version: Literal[1]
     revision: NonNegativeInt
     enabled_providers: EnabledProviderList
@@ -90,8 +90,9 @@ class SettingsWriteRequest(ContractModel):
 def first_install_settings() -> Settings:
     """Missing settings file is an empty enablement list, not all-providers-on."""
 
-    # CONTRACT: new desktop service starts with enabled_providers=[]. One-shot
-    # CLI --live is a separate entrypoint and keeps collecting all adapters.
+    # CONTRACT: new desktop service starts with enabled_providers=[]（PR #8）。
+    # One-shot CLI --live is a separate entrypoint and keeps collecting all
+    # adapters.
     return Settings(settings_version=SETTINGS_VERSION, revision=0, enabled_providers=[])
 
 
@@ -126,8 +127,8 @@ def dump_settings_write(request: SettingsWriteRequest) -> dict[str, Any]:
 def next_settings(current: Settings, request: SettingsWriteRequest) -> Settings:
     """Build the document that a successful CAS commit would persist."""
 
-    # CONTRACT: revision is the persistence CAS token. HTTP 409 mapping belongs
-    # to the API layer; this helper only produces revision+1.
+    # CONTRACT: revision is the persistence CAS token（PR #8）。HTTP 409 mapping
+    # belongs to the API layer; this helper only produces revision+1.
     if request.expected_revision != current.revision:
         raise SettingsRevisionMismatch()
     return Settings(

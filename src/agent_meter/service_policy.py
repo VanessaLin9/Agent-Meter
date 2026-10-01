@@ -1,4 +1,4 @@
-"""Desktop-service enablement and HTTP decision helpers.
+"""Desktop-service enablement and HTTP decision helpers（PR #8）.
 
 Responsibility: decide which providers belong in a snapshot, which GET /usage
 503 applies, and which GET /health state applies. Non-goals: filesystem,
@@ -52,8 +52,8 @@ CONFIG_ERROR = ServiceError(
 def enabled_provider_ids(settings: Settings) -> tuple[EnabledProvider, ...]:
     """Return the providers that may be collected, aggregated, or served."""
 
-    # CONTRACT: the same list drives collection and display. Disabled IDs get
-    # zero new I/O and must not appear in GET /usage.
+    # CONTRACT: the same list drives collection and display（PR #8）。Disabled
+    # IDs get zero new I/O and must not appear in GET /usage.
     return tuple(settings.enabled_providers)
 
 
@@ -71,8 +71,8 @@ def usage_error(
 ) -> ServiceError | None:
     """Return the GET /usage 503 body, or None when a v0.1 snapshot may be served."""
 
-    # FALLBACK: config damage is not an empty enablement list. Empty list is
-    # no_enabled_providers; unreadable settings is snapshot_unavailable.
+    # FALLBACK: config damage is not an empty enablement list（PR #8）。Empty
+    # list is no_enabled_providers; unreadable settings is snapshot_unavailable.
     if settings is None:
         return SNAPSHOT_UNAVAILABLE
     if not settings.enabled_providers:

@@ -1,4 +1,4 @@
-"""HTTP-shaped desktop service DTOs without a web framework.
+"""HTTP-shaped desktop service DTOs without a web framework（PR #8）.
 
 Responsibility: validate health and non-snapshot error envelopes.
 Non-goals: FastAPI, bind address, CORS, or calling providers.
@@ -56,13 +56,13 @@ class ServiceError(ContractModel):
 
 
 class ErrorEnvelope(ContractModel):
-    """GET /usage 503 and other non-snapshot HTTP error documents."""
+    """GET /usage 503 body（PR #8）。Never feed this document to UsageSnapshot."""
 
     error: ServiceError
 
 
 class HealthDocument(ContractModel):
-    """GET /health body. HTTP 200 only means the process accepted the request."""
+    """GET /health body（PR #8）。HTTP 200 means the process is up, not provider health."""
 
     state: HealthState
     error: ServiceError | SkipJsonSchema[None] = None

@@ -1,4 +1,4 @@
-"""Atomic settings persistence with revision CAS.
+"""Atomic settings persistence with revision CAS（PR #8）.
 
 Responsibility: bounded read, private directory/file modes, symlink refusal,
 atomic replace, and compare-and-swap on revision. Non-goals: file watching,
@@ -94,9 +94,9 @@ class SettingsStore:
         path = self._paths.settings_file
         try:
             if _is_absent(path):
-                # FALLBACK: missing file is first install. Loose directory
-                # mode is repaired on the first successful save; a symlink
-                # config dir is never treated as a blank slate.
+                # FALLBACK: missing file is first install, not all-providers-on
+                # （PR #8）。Loose directory mode is repaired on the first
+                # successful save; a symlink config dir is never a blank slate.
                 self._reject_dir_if_present(require_private_mode=False)
                 return first_install_settings()
             self._reject_dir_if_present(require_private_mode=True)
@@ -114,8 +114,9 @@ class SettingsStore:
     def save(self, request: SettingsWriteRequest) -> Settings:
         """Validate, CAS, persist atomically, then return the new document."""
 
-        # CONTRACT: persist succeeds before the caller may apply runtime. A
-        # failed save must leave the previous file and revision untouched.
+        # CONTRACT: persist succeeds before the caller may apply runtime
+        # （PR #8）。A failed save must leave the previous file and revision
+        # untouched.
         with self._lock:
             current = self.load()
             try:
