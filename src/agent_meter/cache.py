@@ -10,7 +10,7 @@ seconds.
 
 Contract: `docs/contracts/usage-api.md` fallback rules. Orchestrator owns I/O
 and retry; This module never touches the filesystem. Disk persistence lives in
-`cache_store.py`.
+`cache_store.py`（PR #9）。
 """
 
 from __future__ import annotations
@@ -137,7 +137,7 @@ def project_enabled_snapshot(
     }
     if not providers:
         # CONTRACT: disabled last-good stays on disk/memory, but GET /usage
-        # must not resurrect it. An empty active map is not a v0.1 snapshot.
+        # must not resurrect it. An empty active map is not a v0.1 snapshot（PR #9）。
         return None
     return build_snapshot(providers, now=now)
 

@@ -1,4 +1,4 @@
-"""Versioned disk cache for normalized usage snapshots.
+"""Versioned disk cache for normalized usage snapshots（PR #9）.
 
 Responsibility: load/save a cache_version envelope, restore last-good into
 memory, and remember persistence faults. Non-goals: merge/freshness policy,
@@ -76,21 +76,21 @@ class CacheSaveError(Exception):
 class DiskCacheEnvelope(ContractModel):
     """On-disk document. Only version metadata plus a usage snapshot."""
 
-    # SECURITY: extra="forbid"；不得落地 raw_response、token 或 exception.
+    # SECURITY: extra="forbid"；不得落地 raw_response、token 或 exception（PR #9）。
     cache_version: Literal[1]
     snapshot: UsageSnapshot
 
 
 @dataclass(frozen=True)
 class CacheLoadResult:
-    """Disk read outcome. missing is not a fault."""
+    """Disk read outcome. Missing file is a miss, not a persistence fault（PR #9）。"""
 
     snapshot: UsageSnapshot | None
     fault: ErrorSummary | None
 
 
 class SnapshotCacheRepository(Protocol):
-    """B2-03 injects this instead of importing filesystem code into merge policy."""
+    """B2-03 injects this instead of importing filesystem I/O into merge policy（PR #9）。"""
 
     def load(self) -> CacheLoadResult:
         """Return the stored snapshot, a miss, or a sanitized fault."""
@@ -106,7 +106,7 @@ def _os_replace(source: Path, destination: Path) -> None:
 
 
 def dump_disk_cache_envelope(envelope: DiskCacheEnvelope) -> dict[str, object]:
-    """JSON-ready envelope. Not a GET /usage payload."""
+    """JSON-ready envelope. GET /usage must never serialize this document（PR #9）。"""
 
     return {
         "cache_version": envelope.cache_version,
@@ -136,6 +136,7 @@ class SnapshotCacheStore:
                         reject_unsafe_dir(
                             self._paths.snapshot_cache_dir, require_private_mode=False
                         )
+                    # FALLBACK: 缺檔是正常冷啟動，不是 cache_error（PR #9）。
                     return CacheLoadResult(snapshot=None, fault=None)
                 if not is_absent(self._paths.snapshot_cache_dir):
                     reject_unsafe_dir(self._paths.snapshot_cache_dir, require_private_mode=True)
@@ -145,7 +146,7 @@ class SnapshotCacheStore:
                 envelope = DiskCacheEnvelope.model_validate(payload)
                 return CacheLoadResult(snapshot=envelope.snapshot, fault=None)
             except (PrivateFileError, OSError, ValidationError, ValueError):
-                # FALLBACK: ignore unusable cache, keep the file, do not crash.
+                # FALLBACK: 損壞／未知版本／過大／symlink 忽略、留檔、不 crash（PR #9）。
                 return CacheLoadResult(snapshot=None, fault=CACHE_READ_FAULT)
 
     def save(self, snapshot: UsageSnapshot) -> None:
@@ -160,6 +161,7 @@ class SnapshotCacheStore:
                     replace=self._replace,
                 )
             except (PrivateFileError, OSError):
+                # FALLBACK: replace 失敗不得清掉目的檔；呼叫端必須保留 memory last-good（PR #9）。
                 raise CacheSaveError() from None
 
 
@@ -176,6 +178,7 @@ class PersistentSnapshotCache:
         """Load last-good from disk, then project to the current enabled set.
 
         Full last-good stays in `stored` even when some providers are disabled.
+        Public snapshot must not refresh `collected_at` or resurrect disabled IDs（PR #9）。
         """
 
         result = self._store.load()
@@ -197,7 +200,7 @@ class PersistentSnapshotCache:
         )
 
     def remember(self, snapshot: UsageSnapshot) -> None:
-        """Keep memory last-good. Persist separately so a save failure cannot wipe it."""
+        """Keep memory last-good. Persist separately so a save failure cannot wipe it（PR #9）。"""
 
         self.stored = snapshot
 
@@ -207,6 +210,7 @@ class PersistentSnapshotCache:
         try:
             self._store.save(self.stored)
         except CacheSaveError:
+            # FALLBACK: 寫入失敗仍繼續用 memory last-good；health 才標 cache_error（PR #9）。
             self.persistence_fault = CACHE_WRITE_FAULT
             raise
         self.persistence_fault = None
