@@ -114,6 +114,7 @@ def health_document(
     if settings is None:
         return HealthDocument(state="degraded", error=CONFIG_ERROR)
     if cache_fault:
+        # CONTRACT: cache_error 蓋過 idle；settings 損壞仍是 config_error（PR #9）。
         return HealthDocument(state="degraded", error=CACHE_ERROR)
     if not settings.enabled_providers:
         return HealthDocument(state="idle")

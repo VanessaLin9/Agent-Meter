@@ -1,7 +1,8 @@
 """Private directory/file helpers for checkout-external runtime files.
 
 Responsibility: 0700/0600 modes, symlink refusal, bounded read, and atomic
-replace. Non-goals: settings CAS, snapshot schema, HTTP.
+replace. Non-goals: settings CAS, snapshot schema, HTTP. Shared by settings
+(PR #8) and the snapshot cache store（PR #9）。
 
 Inputs: paths and UTF-8 payloads. Outputs: bytes or a replaced file. Units:
 file size is bytes.
@@ -102,6 +103,7 @@ def atomic_replace(path: Path, payload: str, *, replace: ReplaceFn) -> None:
             os.fsync(handle.fileno())
         # CONTRACT: chmod the temp file before replace（PR #8）。replace 後再
         # chmod 會在磁碟已提交時仍回失敗，讓 runtime 與 disk 分裂。
+        # Cache store reuses this same commit boundary（PR #9）。
         replace(tmp_path, path)
     except OSError:
         tmp_path.unlink(missing_ok=True)
