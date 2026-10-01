@@ -96,6 +96,27 @@ def test_atomic_replace_failure_keeps_previous_document(tmp_path: Path) -> None:
     assert leftovers == []
 
 
+def test_destination_chmod_after_replace_does_not_report_save_failed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    store = _store(tmp_path)
+    store.save(_write_request("codex", expected_revision=0))
+    real_chmod = os.chmod
+
+    def chmod_live_settings(path: str | bytes | os.PathLike[str], mode: int) -> None:
+        if os.path.basename(os.fsdecode(os.fspath(path))) == "settings.json":
+            raise OSError("destination chmod failed")
+        real_chmod(path, mode)
+
+    monkeypatch.setattr(os, "chmod", chmod_live_settings)
+    saved = _store(tmp_path).save(_write_request("cursor", expected_revision=1))
+    assert saved.revision == 2
+    assert saved.enabled_providers == ["cursor"]
+    assert _store(tmp_path).load() == saved
+    settings_file = tmp_path / "config" / "settings.json"
+    assert stat.S_IMODE(settings_file.stat().st_mode) == 0o600
+
+
 def test_private_modes_are_applied_on_save(tmp_path: Path) -> None:
     store = _store(tmp_path)
     store.save(_write_request("claude", expected_revision=0))
