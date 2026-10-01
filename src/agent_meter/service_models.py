@@ -30,6 +30,7 @@ ServiceErrorCode = Literal[
     "config_error",
     "revision_conflict",
     "save_failed",
+    "cache_error",
 ]
 USAGE_UNAVAILABLE_CODES: frozenset[ServiceErrorCode] = frozenset(
     {

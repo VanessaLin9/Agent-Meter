@@ -9,7 +9,8 @@ payload. Outputs: a new envelope or provider snapshot. Units stay UTC Unix
 seconds.
 
 Contract: `docs/contracts/usage-api.md` fallback rules. Orchestrator owns I/O
-and retry; this module never touches the filesystem.
+and retry; This module never touches the filesystem. Disk persistence lives in
+`cache_store.py`.
 """
 
 from __future__ import annotations
@@ -113,6 +114,32 @@ def evaluate_cached_snapshot(envelope: CacheEnvelope, *, now: int) -> UsageSnaps
     if envelope.snapshot is None:
         return None
     return build_snapshot(envelope.snapshot.providers, now=now)
+
+
+def project_enabled_snapshot(
+    snapshot: UsageSnapshot,
+    enabled: Sequence[str],
+    *,
+    now: int,
+) -> UsageSnapshot | None:
+    """Return a public snapshot of enabled providers only. No filesystem I/O.
+
+    collected_at is preserved. generated_at becomes `now` because this is a new
+    response, not a new collection. Empty enabled or empty intersection is
+    None — callers must not ask build_snapshot for an empty map.
+    """
+
+    enabled_ids = set(enabled)
+    providers = {
+        provider_id: provider
+        for provider_id, provider in snapshot.providers.items()
+        if provider_id in enabled_ids
+    }
+    if not providers:
+        # CONTRACT: disabled last-good stays on disk/memory, but GET /usage
+        # must not resurrect it. An empty active map is not a v0.1 snapshot.
+        return None
+    return build_snapshot(providers, now=now)
 
 
 def apply_collection_result(

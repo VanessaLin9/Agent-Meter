@@ -11,6 +11,7 @@ from jsonschema.exceptions import ValidationError as JsonSchemaValidationError
 from jsonschema.validators import Draft202012Validator
 from pydantic import ValidationError as PydanticValidationError
 
+from agent_meter.cache_store import PUBLIC_CACHE_SCHEMA_ID
 from agent_meter.freshness import DEFAULT_STALE_AFTER_SECONDS
 from agent_meter.models import UsageSnapshot, parse_usage_snapshot
 from agent_meter.providers.claude import CLAUDE_PROVIDER_ID
@@ -91,6 +92,7 @@ def test_public_schema_ids_match_committed_files() -> None:
     assert PUBLIC_SETTINGS_WRITE_SCHEMA_ID.endswith("settings-write-v1.schema.json")
     assert PUBLIC_ERROR_SCHEMA_ID.endswith("error-v1.schema.json")
     assert PUBLIC_HEALTH_SCHEMA_ID.endswith("health-v1.schema.json")
+    assert PUBLIC_CACHE_SCHEMA_ID.endswith("cache-v1.schema.json")
 
 
 @pytest.mark.parametrize(
@@ -238,6 +240,14 @@ def test_health_policy_does_not_claim_provider_health() -> None:
     assert degraded.state == "degraded"
     assert degraded.error is not None
     assert degraded.error.code == "config_error"
+    cache_degraded = health_document(settings=enabled, cache_fault=True)
+    assert dump_health_document(cache_degraded)["state"] == "degraded"
+    assert cache_degraded.error is not None
+    assert cache_degraded.error.code == "cache_error"
+    idle_cache_fault = health_document(settings=first_install_settings(), cache_fault=True)
+    assert idle_cache_fault.state == "degraded"
+    assert idle_cache_fault.error is not None
+    assert idle_cache_fault.error.code == "cache_error"
 
 
 def test_polling_constants_match_desktop_contract() -> None:

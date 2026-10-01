@@ -1,0 +1,7 @@
+{
+  "state": "degraded",
+  "error": {
+    "code": "cache_error",
+    "message": "Usage cache could not be used"
+  }
+}

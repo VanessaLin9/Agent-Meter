@@ -38,7 +38,7 @@ provider transport -> adapter parser -> domain model <- API/cache/ESP32/settings
 - **Settings store**：bounded read、0700／0600、symlink 拒絕、atomic CAS。見 `src/agent_meter/settings_store.py`。
 - **Service DTOs／policy**：health、error envelope、三種 503。見 `src/agent_meter/service_models.py`、`service_policy.py`。
 - **Orchestrator**：獨立呼叫 adapters、timeout／throw isolation、呼叫 domain policy、寫出 gitignored `usage.json`。常駐 scheduler 與 HTTP 尚未建立。
-- **Cache**：atomic persistence 與 restart recovery；envelope 由 domain policy 定義，不保存 credential 或 raw response。檔案落地是後續任務。
+- **Cache**：in-memory last-good merge 在 `cache.py`；disk envelope 與 restart restore 在 `cache_store.py`。不保存 credential 或 raw response。
 - **HTTP API**：提供 schema-valid snapshot、health 與 settings；不主動 refresh provider。尚未建立。
 - **ESP32**：poll、bounded parse、render、offline recovery。
 
@@ -46,7 +46,7 @@ provider transport -> adapter parser -> domain model <- API/cache/ESP32/settings
 
 1. `/AGENTS.md`
 2. `/docs/contracts/README.md`
-3. `/schemas/usage-v0.1.schema.json`、`/schemas/settings-v1.schema.json`、`/schemas/health-v1.schema.json`、`/schemas/error-v1.schema.json`
+3. `/schemas/usage-v0.1.schema.json`、`/schemas/settings-v1.schema.json`、`/schemas/health-v1.schema.json`、`/schemas/error-v1.schema.json`、`/schemas/cache-v1.schema.json`
 4. `/tests/fixtures/contracts/`、`/tests/fixtures/settings/`、`/tests/fixtures/service/`
 5. 對應的 `/docs/providers/<provider>.md`
 6. Collector package root：`/src/agent_meter/`
@@ -55,4 +55,4 @@ provider transport -> adapter parser -> domain model <- API/cache/ESP32/settings
 9. Foundation toolchain decision：`/docs/adr/0001-collector-python-foundation.md`
 10. Desktop settings／DTO decision：`/docs/adr/0002-desktop-settings-and-service-dtos.md`
 
-Normalized usage models 在 `src/agent_meter/models.py`。Aggregation、stale 與 cache envelope 在 `freshness.py`、`aggregation.py`、`cache.py`。Desktop settings 在 `settings.py`、`paths.py`、`settings_store.py`。Health／error DTO 與 503 決策在 `service_models.py`、`service_policy.py`。Claude Code status-line adapter 在 `src/agent_meter/providers/claude.py`。Codex app-server adapter 在 `src/agent_meter/providers/codex.py` 與 `codex_rpc.py`。Cursor period-usage parser 在 `src/agent_meter/providers/cursor.py`，read-only Connect RPC client 在 `cursor_rpc.py`。One-shot orchestrator 在 `src/agent_meter/orchestrator.py`（`python -m agent_meter`）。HTTP API 尚未建立。各 component 的入口 module 必須連回相關 contract，並以 `CONTRACT:`、`SECURITY:`、`PROVIDER:`、`FALLBACK:` 標記不容易從 type system 看出的關鍵 invariant。
+Normalized usage models 在 `src/agent_meter/models.py`。Aggregation、stale 與 cache envelope 在 `freshness.py`、`aggregation.py`、`cache.py`。Desktop settings 在 `settings.py`、`paths.py`、`settings_store.py`。Disk cache 在 `cache_store.py` 與 `private_files.py`。Health／error DTO 與 503 決策在 `service_models.py`、`service_policy.py`。Claude Code status-line adapter 在 `src/agent_meter/providers/claude.py`。Codex app-server adapter 在 `src/agent_meter/providers/codex.py` 與 `codex_rpc.py`。Cursor period-usage parser 在 `src/agent_meter/providers/cursor.py`，read-only Connect RPC client 在 `cursor_rpc.py`。One-shot orchestrator 在 `src/agent_meter/orchestrator.py`（`python -m agent_meter`）。HTTP API 尚未建立。各 component 的入口 module 必須連回相關 contract，並以 `CONTRACT:`、`SECURITY:`、`PROVIDER:`、`FALLBACK:` 標記不容易從 type system 看出的關鍵 invariant。

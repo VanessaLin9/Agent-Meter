@@ -7,6 +7,7 @@ Machine-readable sources:
 - [`../../schemas/settings-write-v1.schema.json`](../../schemas/settings-write-v1.schema.json)
 - [`../../schemas/health-v1.schema.json`](../../schemas/health-v1.schema.json)
 - [`../../schemas/error-v1.schema.json`](../../schemas/error-v1.schema.json)
+- [`../../schemas/cache-v1.schema.json`](../../schemas/cache-v1.schema.json)
 
 本檔定義桌面 Collector service 的跨層 DTO、啟用語意與失敗碼。FastAPI handlers 尚未實作；API 層之後只能接線，不得改這些欄位。
 
@@ -20,6 +21,7 @@ Machine-readable sources:
 | Health v1 | `src/agent_meter/service_models.py` | GET /health |
 | Error envelope v1 | `src/agent_meter/service_models.py` | 非 snapshot 的 HTTP error |
 | Enablement / 503 決策 | `src/agent_meter/service_policy.py` | 未來 API 與 scheduler |
+| Disk cache v1 | `src/agent_meter/cache_store.py` | 重啟恢復；不得當 GET /usage body |
 
 HTTP error envelope **不是** usage snapshot。不得把它送進 `parse_usage_snapshot`。usage v0.1 schema 維持 `providers` 至少一個 key；空清單不得靠新增 `disabled` status 或空 `providers` 混進 200。
 
@@ -65,7 +67,7 @@ Body：`expected_revision` + `enabled_providers`。成功 回新 settings docume
 
 - `idle`：設定可讀且沒有任何 enabled provider。
 - `ready`：設定可讀且至少啟用一個 provider（snapshot 是否就緒不在這裡表示）。
-- `degraded`：設定無法使用；必須帶 `error.code=config_error`。
+- `degraded`：設定無法使用（`config_error`）或 cache 無法使用（`cache_error`）。
 
 只含白名單 metadata：`state` 與 optional `error`。
 
@@ -96,5 +98,6 @@ Body：`expected_revision` + `enabled_providers`。成功 回新 settings docume
 | 已啟用、snapshot 未齊 | 200 | CAS | `ready` | 503 `snapshot_not_ready` |
 | 內部無法產生 snapshot | 200 | CAS | `ready` | 503 `snapshot_unavailable` |
 | 設定損壞 | 503/error `config_error` | 拒絕寫入 | `degraded` + `config_error` | 503 `snapshot_unavailable` |
+| cache 損壞或 save 失敗 | 200 | CAS | `degraded` + `cache_error` | memory last-good 或 `snapshot_not_ready` |
 | CAS mismatch | — | `revision_conflict`，不寫檔 | 不變 | 不變 |
 | atomic save 失敗 | 舊 document | `save_failed`，runtime 不變 | 不變 | 不變 |

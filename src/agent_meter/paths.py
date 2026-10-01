@@ -39,6 +39,10 @@ class RuntimePaths:
         return self.cache_dir / SNAPSHOT_CACHE_DIR_NAME
 
     @property
+    def snapshot_cache_file(self) -> Path:
+        return self.snapshot_cache_dir / "snapshot.json"
+
+    @property
     def mailbox_dir(self) -> Path:
         return self.cache_dir / MAILBOX_DIR_NAME
 

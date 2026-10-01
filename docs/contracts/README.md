@@ -6,6 +6,7 @@
 
 - [`usage-api.md`](usage-api.md)：normalized snapshot 與 HTTP semantics。
 - [`settings.md`](settings.md)：provider enablement document、path layout、CAS 與權限。
+- [`cache.md`](cache.md)：disk last-good envelope、重啟投影與 persistence fault。
 - [`desktop-service.md`](desktop-service.md)：GET/PUT DTO、三種 503、health state、停用 race。
 - [`provider-adapter.md`](provider-adapter.md)：adapter responsibility、result 與 failure taxonomy。
 - [`security-and-testing.md`](security-and-testing.md)：credential boundary、redaction、fixtures 與 CI 規則。
@@ -13,6 +14,7 @@
 - [`../../schemas/settings-v1.schema.json`](../../schemas/settings-v1.schema.json)：settings document。
 - [`../../schemas/health-v1.schema.json`](../../schemas/health-v1.schema.json)：GET /health body。
 - [`../../schemas/error-v1.schema.json`](../../schemas/error-v1.schema.json)：非 snapshot 的 HTTP error envelope。
+- [`../../schemas/cache-v1.schema.json`](../../schemas/cache-v1.schema.json)：disk cache envelope。
 - [`../architecture/overview.md`](../architecture/overview.md)：component boundaries 與 dependency direction。
 
 ## Change policy

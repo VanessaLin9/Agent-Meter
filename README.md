@@ -12,7 +12,7 @@ Repository 只保存程式碼、測試、執行文件，以及實作所需的 AP
 
 ## Collector development
 
-Normalized usage models、aggregation／stale policy、Claude Code status-line adapter、Codex app-server adapter、Cursor Connect RPC adapter，以及一次收集三個 provider 的 orchestrator 已落地。Desktop service 的 settings／health／error 契約與本機 settings store 已落地，但還沒有 Collector HTTP API 或 scheduler。
+Normalized usage models、aggregation／stale policy、Claude Code status-line adapter、Codex app-server adapter、Cursor Connect RPC adapter、一次收集三個 provider 的 orchestrator、desktop settings store，以及可重啟恢復的 disk cache 已落地。還沒有 Collector HTTP API 或 scheduler。
 
 預設不讀 credential、不發 live request。本機已登入且要產出 gitignore 的 `usage.json` 時才加 `--live`：
 
@@ -84,5 +84,6 @@ Secret scan remains `bash scripts/security-check.sh`. CI runs the same `scripts/
 - [Settings JSON Schema](schemas/settings-v1.schema.json)
 - [Health JSON Schema](schemas/health-v1.schema.json)
 - [Service error JSON Schema](schemas/error-v1.schema.json)
+- [Disk cache JSON Schema](schemas/cache-v1.schema.json)
 
 開發與 CI 預設完全 credential-free。Provider token 不放在 repo-local `.env`；每台執行主機各自使用 provider-owned session 或 checkout 外的 secret storage。Desktop service 的 settings 預設在 macOS `~/Library/Application Support/Agent Meter`，cache／mailbox 在 `~/Library/Caches/Agent Meter`；這些 runtime 檔不進 Git。新 service 預設不啟用任何 provider；現有 `--live` CLI 行為不變。
