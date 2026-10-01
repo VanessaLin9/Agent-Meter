@@ -1,4 +1,4 @@
-"""Runtime directories for the desktop Collector service.
+"""Runtime directories for the desktop Collector service（PR #8）.
 
 Responsibility: compose checkout-external config and cache paths.
 Non-goals: creating directories, reading settings, or storing credentials.
@@ -16,7 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-# SECURITY: runtime files stay under the user Library, never the repo.
+# SECURITY: runtime files stay under the user Library, never the repo（PR #8）。
 APP_DIR_NAME = "Agent Meter"
 SETTINGS_FILE_NAME = "settings.json"
 SNAPSHOT_CACHE_DIR_NAME = "snapshots"
