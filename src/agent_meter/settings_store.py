@@ -216,8 +216,10 @@ def _atomic_replace(path: Path, payload: str, *, replace: ReplaceFn) -> None:
             handle.write(payload)
             handle.flush()
             os.fsync(handle.fileno())
+        # CONTRACT: chmod the temp file before replace（PR #8）。replace 後再
+        # chmod 會在磁碟已提交新 revision 時仍回 save_failed，讓 runtime 與
+        # disk 分裂；重試變 revision_conflict，重啟卻套用新設定。
         replace(tmp_path, path)
-        os.chmod(path, _FILE_MODE)
     except OSError:
         tmp_path.unlink(missing_ok=True)
         raise SettingsSaveError() from None
