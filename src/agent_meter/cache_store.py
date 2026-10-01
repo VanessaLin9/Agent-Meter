@@ -132,14 +132,10 @@ class SnapshotCacheStore:
         with self._lock:
             try:
                 if is_absent(path):
-                    if not is_absent(self._paths.snapshot_cache_dir):
-                        reject_unsafe_dir(
-                            self._paths.snapshot_cache_dir, require_private_mode=False
-                        )
+                    self._reject_runtime_dirs_if_present(require_private_mode=False)
                     # FALLBACK: 缺檔是正常冷啟動，不是 cache_error（PR #9）。
                     return CacheLoadResult(snapshot=None, fault=None)
-                if not is_absent(self._paths.snapshot_cache_dir):
-                    reject_unsafe_dir(self._paths.snapshot_cache_dir, require_private_mode=True)
+                self._reject_runtime_dirs_if_present(require_private_mode=True)
                 reject_unsafe_file(path)
                 raw = read_bounded_nofollow(path, MAX_CACHE_BYTES)
                 payload = parse_json_object(raw)
@@ -154,6 +150,8 @@ class SnapshotCacheStore:
         payload = json.dumps(dump_disk_cache_envelope(envelope), indent=2, ensure_ascii=True) + "\n"
         with self._lock:
             try:
+                self._reject_runtime_dirs_if_present(require_private_mode=False)
+                prepare_private_dir(self._paths.cache_dir)
                 prepare_private_dir(self._paths.snapshot_cache_dir)
                 atomic_replace(
                     self._paths.snapshot_cache_file,
@@ -163,6 +161,16 @@ class SnapshotCacheStore:
             except (PrivateFileError, OSError):
                 # FALLBACK: replace 失敗不得清掉目的檔；呼叫端必須保留 memory last-good（PR #9）。
                 raise CacheSaveError() from None
+
+    def _reject_runtime_dirs_if_present(self, *, require_private_mode: bool) -> None:
+        # SECURITY: lstat cache_dir first. lstat of snapshots follows a
+        # symlink cache root and would look like a private leaf（PR #9）。
+        cache_dir = self._paths.cache_dir
+        snapshot_dir = self._paths.snapshot_cache_dir
+        if not is_absent(cache_dir):
+            reject_unsafe_dir(cache_dir, require_private_mode=require_private_mode)
+        if not is_absent(snapshot_dir):
+            reject_unsafe_dir(snapshot_dir, require_private_mode=require_private_mode)
 
 
 class PersistentSnapshotCache:

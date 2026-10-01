@@ -54,12 +54,20 @@ def _enabled(*providers: EnabledProvider, revision: int = 1) -> Settings:
     )
 
 
+def _prepare_existing_cache_dirs(paths: RuntimePaths) -> None:
+    paths.cache_dir.mkdir(mode=0o700)
+    os.chmod(paths.cache_dir, 0o700)
+    paths.snapshot_cache_dir.mkdir(mode=0o700)
+    os.chmod(paths.snapshot_cache_dir, 0o700)
+
+
 def test_missing_cache_is_a_normal_start(tmp_path: Path) -> None:
     store = SnapshotCacheStore(_paths(tmp_path))
     result = store.load()
     assert result.snapshot is None
     assert result.fault is None
     assert not (_paths(tmp_path).snapshot_cache_dir).exists()
+    assert not (_paths(tmp_path).cache_dir).exists()
 
 
 def test_save_then_new_store_load_round_trips(tmp_path: Path) -> None:
@@ -72,6 +80,7 @@ def test_save_then_new_store_load_round_trips(tmp_path: Path) -> None:
     cache_file = _paths(tmp_path).snapshot_cache_file
     assert stat.S_IMODE(cache_file.stat().st_mode) == 0o600
     assert stat.S_IMODE(cache_file.parent.stat().st_mode) == 0o700
+    assert stat.S_IMODE(_paths(tmp_path).cache_dir.stat().st_mode) == 0o700
     payload = json.loads(cache_file.read_text(encoding="utf-8"))
     assert payload == dump_disk_cache_envelope(
         DiskCacheEnvelope(cache_version=1, snapshot=snapshot)
@@ -130,10 +139,9 @@ def test_all_disabled_returns_no_snapshot_not_schema_error(tmp_path: Path) -> No
 
 def test_malformed_cache_with_secret_is_ignored_not_deleted(tmp_path: Path) -> None:
     store = SnapshotCacheStore(_paths(tmp_path))
-    cache_dir = _paths(tmp_path).snapshot_cache_dir
-    cache_dir.mkdir(mode=0o700, parents=True)
-    os.chmod(cache_dir, 0o700)
-    cache_file = _paths(tmp_path).snapshot_cache_file
+    paths = _paths(tmp_path)
+    _prepare_existing_cache_dirs(paths)
+    cache_file = paths.snapshot_cache_file
     cache_file.write_text(f'{{"token": "{FAKE_SECRET}"', encoding="utf-8")
     os.chmod(cache_file, 0o600)
     result = store.load()
@@ -153,9 +161,7 @@ def test_malformed_cache_with_secret_is_ignored_not_deleted(tmp_path: Path) -> N
 
 def test_unknown_version_and_oversized_and_symlink_are_faults(tmp_path: Path) -> None:
     paths = _paths(tmp_path)
-    cache_dir = paths.snapshot_cache_dir
-    cache_dir.mkdir(mode=0o700, parents=True)
-    os.chmod(cache_dir, 0o700)
+    _prepare_existing_cache_dirs(paths)
     cache_file = paths.snapshot_cache_file
     cache_file.write_text(
         json.dumps({"cache_version": 2, "snapshot": dump_usage_snapshot(_snapshot())}),
@@ -183,6 +189,41 @@ def test_unknown_version_and_oversized_and_symlink_are_faults(tmp_path: Path) ->
     assert linked.fault == CACHE_READ_FAULT
     assert FAKE_SECRET not in str(linked.fault)
     assert FAKE_SECRET in outside.read_text(encoding="utf-8")
+
+
+def test_loose_cache_root_mode_is_a_fault_until_save_repairs_it(tmp_path: Path) -> None:
+    paths = _paths(tmp_path)
+    snapshot = _snapshot()
+    SnapshotCacheStore(paths).save(snapshot)
+    os.chmod(paths.cache_dir, 0o755)
+    assert SnapshotCacheStore(paths).load().fault == CACHE_READ_FAULT
+    SnapshotCacheStore(paths).save(snapshot)
+    assert stat.S_IMODE(paths.cache_dir.stat().st_mode) == 0o700
+    repaired = SnapshotCacheStore(paths).load()
+    assert repaired.fault is None
+    assert repaired.snapshot is not None
+
+
+def test_symlink_cache_root_is_not_followed_on_load_or_save(tmp_path: Path) -> None:
+    paths = _paths(tmp_path)
+    outside = tmp_path / "outside"
+    outside.mkdir(mode=0o700)
+    os.chmod(outside, 0o700)
+    nested = outside / "snapshots"
+    nested.mkdir(mode=0o700)
+    os.chmod(nested, 0o700)
+    planted = nested / "snapshot.json"
+    planted.write_text(json.dumps({"token": FAKE_SECRET}), encoding="utf-8")
+    os.chmod(planted, 0o600)
+    os.symlink(outside, paths.cache_dir)
+    loaded = SnapshotCacheStore(paths).load()
+    assert loaded.snapshot is None
+    assert loaded.fault == CACHE_READ_FAULT
+    assert FAKE_SECRET not in str(loaded.fault)
+    with pytest.raises(CacheSaveError):
+        SnapshotCacheStore(paths).save(_snapshot())
+    assert FAKE_SECRET in planted.read_text(encoding="utf-8")
+    assert json.loads(planted.read_text(encoding="utf-8")) == {"token": FAKE_SECRET}
 
 
 def test_replace_abort_keeps_previous_and_cleans_temp(tmp_path: Path) -> None:
@@ -278,8 +319,7 @@ def test_extra_secret_field_is_a_fault_and_file_is_kept(tmp_path: Path) -> None:
     envelope = dump_disk_cache_envelope(DiskCacheEnvelope(cache_version=1, snapshot=_snapshot()))
     envelope["access_token"] = FAKE_SECRET
     paths = _paths(tmp_path)
-    paths.snapshot_cache_dir.mkdir(mode=0o700, parents=True)
-    os.chmod(paths.snapshot_cache_dir, 0o700)
+    _prepare_existing_cache_dirs(paths)
     cache_file = paths.snapshot_cache_file
     cache_file.write_text(json.dumps(envelope), encoding="utf-8")
     os.chmod(cache_file, 0o600)

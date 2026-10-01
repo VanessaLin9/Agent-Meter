@@ -16,7 +16,8 @@ GET /usage 200 仍是 [`usage-api.md`](usage-api.md)。本檔只定義 checkout 
 
 - 缺檔是正常啟動，不是 fault。
 - malformed／truncated／unknown version／oversized／permission／symlink：忽略該 cache、留下原檔、記錄 sanitized `cache` category。Health 為 `degraded` + `cache_error`。
-- 寫入 atomic temp + replace，目錄 `0700`、檔案 `0600`。replace 前把 temp chmod 成 `0600`。失敗只清自己的 temp，不清空使用者目錄。
+- 寫入 atomic temp + replace。`cache_dir` 與 `snapshots` 都必須是 `0700`，檔案 `0600`。每一層 runtime 目錄各自建立並 chmod，不得 `mkdir(parents=True)` 讓中間層繼承 umask。replace 前把 temp chmod 成 `0600`。失敗只清自己的 temp，不清空使用者目錄。
+- load／save 都先 `lstat` `cache_dir`。根目錄 symlink 或（檔案存在時）過寬權限視為損壞 cache，不得沿著 symlink 讀寫到其他位置。
 - save 失敗保留 memory last-good，health `degraded`；下一次成功寫入清掉 persistence fault。
 - 單一 store owner 序列化 writer；reader 永遠得到完整舊版或完整新版，不得看到半份 JSON。
 

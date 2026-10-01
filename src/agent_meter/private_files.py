@@ -57,12 +57,19 @@ def reject_unsafe_file(path: Path) -> None:
 
 
 def prepare_private_dir(path: Path) -> None:
+    # SECURITY: never mkdir(parents=True). Intermediate dirs inherit umask
+    # and can land as 0755, then later lstat of a nested leaf follows a
+    # symlink parent（PR #9）。Callers create each runtime dir from the store
+    # root down as 0700.
     if path.is_symlink():
+        raise PrivateFileError()
+    parent = path.parent
+    if parent.is_symlink():
         raise PrivateFileError()
     if path.exists() and not path.is_dir():
         raise PrivateFileError()
-    path.mkdir(mode=DIR_MODE, parents=True, exist_ok=True)
-    if path.is_symlink():
+    path.mkdir(mode=DIR_MODE, exist_ok=True)
+    if path.is_symlink() or not path.is_dir():
         raise PrivateFileError()
     os.chmod(path, DIR_MODE)
 
