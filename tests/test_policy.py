@@ -23,6 +23,7 @@ from agent_meter.cache import (
     apply_snapshot_payload,
     evaluate_cached_snapshot,
     merge_collection_results,
+    project_enabled_snapshot,
 )
 from agent_meter.freshness import (
     DEFAULT_STALE_AFTER_SECONDS,
@@ -660,6 +661,23 @@ def test_restore_from_cache_recomputes_stale_with_injected_clock() -> None:
 
 def test_restore_without_cache_returns_none() -> None:
     assert evaluate_cached_snapshot(CacheEnvelope(), now=NOW) is None
+
+
+def test_project_enabled_snapshot_omits_disabled_and_keeps_collected_at() -> None:
+    snapshot = parse_usage_snapshot(_ok_payload())
+    original = snapshot.providers["codex"].collected_at
+    later = NOW + 10
+    public = project_enabled_snapshot(snapshot, ["codex"], now=later)
+    assert public is not None
+    assert set(public.providers) == {"codex"}
+    assert public.generated_at == later
+    assert public.providers["codex"].collected_at == original
+
+
+def test_project_enabled_empty_or_disjoint_returns_none() -> None:
+    snapshot = parse_usage_snapshot(_ok_payload())
+    assert project_enabled_snapshot(snapshot, [], now=NOW) is None
+    assert project_enabled_snapshot(snapshot, ["missing"], now=NOW) is None
 
 
 def test_build_snapshot_from_merged_results_matches_contract_statuses() -> None:

@@ -47,6 +47,10 @@ CONFIG_ERROR = ServiceError(
     code="config_error",
     message="Settings could not be read",
 )
+CACHE_ERROR = ServiceError(
+    code="cache_error",
+    message="Usage cache could not be used",
+)
 
 
 def enabled_provider_ids(settings: Settings) -> tuple[EnabledProvider, ...]:
@@ -100,11 +104,17 @@ def usage_error_envelope(
     return ErrorEnvelope(error=error)
 
 
-def health_document(*, settings: Settings | None) -> HealthDocument:
+def health_document(
+    *,
+    settings: Settings | None,
+    cache_fault: bool = False,
+) -> HealthDocument:
     """Process-liveness document. Provider quota health lives in GET /usage."""
 
     if settings is None:
         return HealthDocument(state="degraded", error=CONFIG_ERROR)
+    if cache_fault:
+        return HealthDocument(state="degraded", error=CACHE_ERROR)
     if not settings.enabled_providers:
         return HealthDocument(state="idle")
     return HealthDocument(state="ready")

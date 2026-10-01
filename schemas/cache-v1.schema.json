@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-meter.local/schemas/cache-v1.schema.json",
+  "title": "Agent Meter Disk Cache v1",
+  "description": "Checkout-external last-good usage cache. Not a GET /usage payload.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["cache_version", "snapshot"],
+  "properties": {
+    "cache_version": {
+      "const": 1
+    },
+    "snapshot": {
+      "type": "object",
+      "required": ["schema_version", "generated_at", "status", "providers"],
+      "properties": {
+        "schema_version": {
+          "const": "0.1"
+        }
+      }
+    }
+  }
+}

@@ -24,7 +24,8 @@
             "snapshot_unavailable",
             "config_error",
             "revision_conflict",
-            "save_failed"
+            "save_failed",
+            "cache_error"
           ]
         },
         "message": {
