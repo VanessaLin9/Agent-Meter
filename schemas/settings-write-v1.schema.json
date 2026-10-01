@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-meter.local/schemas/settings-write-v1.schema.json",
+  "title": "Agent Meter Settings Write v1",
+  "description": "PUT /settings body. expected_revision is the CAS token from the last GET /settings.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["expected_revision", "enabled_providers"],
+  "properties": {
+    "expected_revision": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "enabled_providers": {
+      "type": "array",
+      "maxItems": 3,
+      "uniqueItems": true,
+      "items": {
+        "enum": ["codex", "cursor", "claude"]
+      }
+    }
+  }
+}

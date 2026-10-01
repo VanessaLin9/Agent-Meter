@@ -1,0 +1,7 @@
+{
+  "error": {
+    "code": "no_enabled_providers",
+    "message": "No providers enabled",
+    "token": "PLANTED_PROVIDER_TOKEN_VALUE_DO_NOT_EMIT"
+  }
+}

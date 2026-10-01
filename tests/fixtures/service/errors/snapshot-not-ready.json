@@ -1,0 +1,6 @@
+{
+  "error": {
+    "code": "snapshot_not_ready",
+    "message": "Usage snapshot is not ready"
+  }
+}

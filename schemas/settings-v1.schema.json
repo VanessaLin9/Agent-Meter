@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-meter.local/schemas/settings-v1.schema.json",
+  "title": "Agent Meter Settings v1",
+  "description": "Credential-free persisted provider enablement. No tokens, paths, or account identifiers.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["settings_version", "revision", "enabled_providers"],
+  "properties": {
+    "settings_version": {
+      "const": 1
+    },
+    "revision": {
+      "$ref": "#/$defs/nonNegativeInt"
+    },
+    "enabled_providers": {
+      "type": "array",
+      "maxItems": 3,
+      "uniqueItems": true,
+      "items": {
+        "enum": ["codex", "cursor", "claude"]
+      }
+    }
+  },
+  "$defs": {
+    "nonNegativeInt": {
+      "type": "integer",
+      "minimum": 0
+    }
+  }
+}
