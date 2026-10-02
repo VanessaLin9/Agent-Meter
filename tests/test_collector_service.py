@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import io
 import json
+import os
+import stat
 import threading
 import time
 from pathlib import Path
@@ -14,7 +16,11 @@ import pytest
 from agent_meter.cache import ProviderCollectionFailure, ProviderCollectionSuccess
 from agent_meter.cache_store import SnapshotCacheStore
 from agent_meter.collector_service import CollectorService
-from agent_meter.instance_lock import ServiceAlreadyRunningError, ServiceInstanceLock
+from agent_meter.instance_lock import (
+    ServiceAlreadyRunningError,
+    ServiceInstanceLock,
+    ServiceLockError,
+)
 from agent_meter.models import (
     QuotaMeter,
     UsageSnapshot,
@@ -452,8 +458,10 @@ def test_reenable_does_not_apply_previous_generation(tmp_path: Path) -> None:
         service.apply_settings(
             SettingsWriteRequest(expected_revision=2, enabled_providers=["codex"])
         )
-        _wait_until(lambda: factory.enter_counts.get("codex", 0) >= 2)
+        time.sleep(0.05)
+        assert factory.enter_counts.get("codex") == 1
         gate.set()
+        _wait_until(lambda: factory.enter_counts.get("codex", 0) >= 2)
         _wait_collects(factory, 2)
         snapshot = _wait_usage_snapshot(service)
         assert snapshot.providers["codex"].collected_at == 2
@@ -585,8 +593,10 @@ def test_restart_discards_late_job_from_previous_run(tmp_path: Path) -> None:
         service.stop()
         factory.set_result("codex", _codex_ok(collected_at=2))
         service.start()
-        _wait_until(lambda: factory.enter_counts.get("codex", 0) >= 2)
+        time.sleep(0.05)
+        assert factory.enter_counts.get("codex") == 1
         gate.set()
+        _wait_until(lambda: factory.enter_counts.get("codex", 0) >= 2)
         _wait_collects(factory, 2)
         snapshot = _wait_usage_snapshot(service)
         assert snapshot.providers["codex"].collected_at == 2
@@ -748,6 +758,73 @@ def test_live_factory_does_not_collect_until_callable_runs(monkeypatch: pytest.M
     with pytest.raises(AssertionError, match="live collect"):
         collector(now=NOW, deadline_seconds=1)
     assert calls == ["called"]
+
+
+def test_reenable_does_not_occupy_second_worker(tmp_path: Path) -> None:
+    factory = SpyFactory()
+    codex_gate = factory.block("codex")
+    factory.set_result("codex", _codex_ok(collected_at=1))
+    factory.set_result("cursor", lambda *, now, deadline_seconds: _cursor_ok(collected_at=now))
+    clocks = FakeClocks()
+    service, paths, _logs = _make_service(tmp_path, factory, clocks)
+    _save_settings(paths, "codex", "cursor")
+    service.start()
+    try:
+        _wait_until(lambda: factory.enter_counts.get("codex", 0) >= 1)
+        _wait_until(
+            lambda: len([item for item in factory.collect_calls if item[0] == "cursor"]) == 1
+        )
+        service.apply_settings(
+            SettingsWriteRequest(expected_revision=1, enabled_providers=["cursor"])
+        )
+        factory.set_result("codex", _codex_ok(collected_at=2))
+        service.apply_settings(
+            SettingsWriteRequest(expected_revision=2, enabled_providers=["codex", "cursor"])
+        )
+        clocks.advance(POLL_INTERVAL_SECONDS)
+        _wait_until(
+            lambda: len([item for item in factory.collect_calls if item[0] == "cursor"]) == 2
+        )
+        assert factory.enter_counts.get("codex") == 1
+    finally:
+        codex_gate.set()
+        service.stop()
+
+
+def test_world_writable_config_dir_stays_config_error(tmp_path: Path) -> None:
+    factory = SpyFactory()
+    factory.set_result("codex", _codex_ok())
+    clocks = FakeClocks()
+    service, paths, _logs = _make_service(tmp_path, factory, clocks)
+    _save_settings(paths, "codex")
+    os.chmod(paths.config_dir, 0o777)
+    service.start()
+    try:
+        health = service.health()
+        assert health.state == "degraded"
+        assert health.error is not None
+        assert health.error.code == "config_error"
+        assert factory.collect_calls == []
+        assert stat.S_IMODE(paths.config_dir.stat().st_mode) == 0o777
+    finally:
+        service.stop()
+
+
+def test_symlink_lock_file_is_rejected_without_following(tmp_path: Path) -> None:
+    factory = SpyFactory()
+    clocks = FakeClocks()
+    service, paths, logs = _make_service(tmp_path, factory, clocks)
+    _save_settings(paths, "codex")
+    target = tmp_path / "outside.lock"
+    target.write_text(FAKE_SECRET, encoding="utf-8")
+    os.chmod(target, 0o644)
+    os.symlink(target, paths.service_lock_file)
+    with pytest.raises(ServiceLockError) as excinfo:
+        service.start()
+    assert FAKE_SECRET not in str(excinfo.value)
+    assert FAKE_SECRET not in logs.getvalue()
+    assert stat.S_IMODE(target.stat().st_mode) == 0o644
+    assert target.read_text(encoding="utf-8") == FAKE_SECRET
 
 
 def test_instance_lock_round_trip(tmp_path: Path) -> None:

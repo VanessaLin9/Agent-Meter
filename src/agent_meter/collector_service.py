@@ -348,7 +348,9 @@ class CollectorService:
         for provider_id in self._enabled:
             if provider_id not in POLLED_PROVIDER_IDS:
                 continue
-            if self._in_flight.get(provider_id) == self._generations[provider_id]:
+            # CONTRACT: 任何 generation 的 in-flight 都佔 slot。re-enable 等
+            # 舊 job 結束才 dispatch，避免兩條 Codex 佔滿 max_workers=2（PR #10）。
+            if provider_id in self._in_flight:
                 continue
             scheduled = self._next_due.get(provider_id)
             if scheduled is not None and scheduled <= now:
@@ -359,10 +361,7 @@ class CollectorService:
         now = self._mono.monotonic()
         waits: list[float] = []
         for provider_id in self._enabled:
-            if (
-                provider_id not in POLLED_PROVIDER_IDS
-                or self._in_flight.get(provider_id) == self._generations[provider_id]
-            ):
+            if provider_id not in POLLED_PROVIDER_IDS or provider_id in self._in_flight:
                 continue
             scheduled = self._next_due.get(provider_id)
             if scheduled is None:
@@ -377,7 +376,7 @@ class CollectorService:
             if (
                 not self._running
                 or provider_id not in self._enabled
-                or self._in_flight.get(provider_id) == self._generations[provider_id]
+                or provider_id in self._in_flight
                 or provider_id not in POLLED_PROVIDER_IDS
             ):
                 return
