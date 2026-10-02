@@ -92,6 +92,7 @@ class SpyFactory(ProviderCollectorFactory):
         self._lock = threading.Lock()
         self.collector_for_calls: list[str] = []
         self.collect_calls: list[tuple[str, int, float]] = []
+        self.enter_counts: dict[str, int] = {}
         self._results: dict[str, Any] = {}
         self._blocks: dict[str, threading.Event] = {}
         self.entered: dict[str, threading.Event] = {}
@@ -112,6 +113,8 @@ class SpyFactory(ProviderCollectorFactory):
         def collect(
             *, now: int, deadline_seconds: float
         ) -> ProviderCollectionSuccess | ProviderCollectionFailure:
+            with self._lock:
+                self.enter_counts[provider_id] = self.enter_counts.get(provider_id, 0) + 1
             entered.set()
             gate = self._blocks.get(provider_id)
             if gate is not None:
@@ -554,6 +557,55 @@ def test_restart_restores_settings_and_last_good(tmp_path: Path) -> None:
         service2.stop()
 
 
+def test_same_instance_stop_then_start_reschedules_polls(tmp_path: Path) -> None:
+    factory = SpyFactory()
+    factory.set_result("codex", lambda *, now, deadline_seconds: _codex_ok(collected_at=now))
+    clocks = FakeClocks()
+    service, paths, _logs = _make_service(tmp_path, factory, clocks)
+    _save_settings(paths, "codex")
+    service.start()
+    try:
+        _wait_collects(factory, 1)
+        _wait_usage_snapshot(service)
+        first = len(factory.collect_calls)
+        service.stop()
+        service.start()
+        _wait_until(lambda: len(factory.collect_calls) > first)
+        snapshot = _wait_usage_snapshot(service)
+        assert set(snapshot.providers) == {"codex"}
+    finally:
+        service.stop()
+
+
+def test_restart_discards_late_job_from_previous_run(tmp_path: Path) -> None:
+    factory = SpyFactory()
+    gate = factory.block("codex")
+    sequence = {"n": 0}
+
+    def _result(*, now: int, deadline_seconds: float) -> ProviderCollectionSuccess:
+        del now, deadline_seconds
+        sequence["n"] += 1
+        return _codex_ok(collected_at=sequence["n"])
+
+    factory.set_result("codex", _result)
+    clocks = FakeClocks()
+    service, paths, _logs = _make_service(tmp_path, factory, clocks, shutdown_deadline_seconds=0.2)
+    _save_settings(paths, "codex")
+    service.start()
+    try:
+        _wait_until(lambda: factory.enter_counts.get("codex", 0) >= 1)
+        service.stop()
+        service.start()
+        _wait_until(lambda: factory.enter_counts.get("codex", 0) >= 2)
+        gate.set()
+        _wait_collects(factory, 2)
+        snapshot = _wait_usage_snapshot(service)
+        assert snapshot.providers["codex"].collected_at == 2
+    finally:
+        gate.set()
+        service.stop()
+
+
 def test_auth_missing_without_last_good_is_schema_valid_unavailable(tmp_path: Path) -> None:
     factory = SpyFactory()
     factory.set_result("cursor", _auth_missing("cursor", CURSOR_SOURCE))
@@ -599,6 +651,7 @@ def test_claude_enabled_waits_without_calling_factory(tmp_path: Path) -> None:
 
 def test_disable_removes_provider_from_projection_without_refreshing_age(tmp_path: Path) -> None:
     factory = SpyFactory()
+    cursor_gate = factory.block("cursor")
     factory.set_result("codex", _codex_ok())
     factory.set_result("cursor", _cursor_ok())
     clocks = FakeClocks()
@@ -607,17 +660,15 @@ def test_disable_removes_provider_from_projection_without_refreshing_age(tmp_pat
     _save_settings(paths, "codex", "cursor")
     service.start()
     try:
-        _wait_usage_snapshot(service)
-        original = service.usage()
-        assert isinstance(original, UsageSnapshot)
-        cursor_age = original.providers["cursor"].collected_at
+        snapshot = _wait_usage_snapshot(service)
+        cursor_age = snapshot.providers["cursor"].collected_at
+        assert cursor_age == 1_999_999_970
         service.apply_settings(
             SettingsWriteRequest(expected_revision=1, enabled_providers=["codex"])
         )
         remaining = service.usage()
         assert isinstance(remaining, UsageSnapshot)
         assert set(remaining.providers) == {"codex"}
-        factory.block("cursor")
         service.apply_settings(
             SettingsWriteRequest(expected_revision=2, enabled_providers=["codex", "cursor"])
         )
@@ -625,8 +676,7 @@ def test_disable_removes_provider_from_projection_without_refreshing_age(tmp_pat
         assert isinstance(restored, UsageSnapshot)
         assert restored.providers["cursor"].collected_at == cursor_age
     finally:
-        for event in factory._blocks.values():
-            event.set()
+        cursor_gate.set()
         service.stop()
 
 
