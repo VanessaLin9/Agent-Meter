@@ -29,13 +29,14 @@ Scheduler 只接線。它不得複製 second merge／fallback，也不得在 GET
 
 - 晚到的 success／failure、取消後才回來的結果、先關再開前那一筆，都不得寫 memory／disk 或改 status。
 - 已送出的 request 無法撤回。文件不承諾「沒有任何 in-flight I/O」。
-- 同 provider 同時最多一個 current-generation job。off→on 等舊 job 結束後立刻 refresh，不接續舊 generation。
+- 同 provider 同時最多一個 in-flight job（含舊 generation）。off→on 等舊 job 結束後立刻 refresh，不接續舊 generation，也不另佔一條 worker。
 - 重新啟用可立刻投影 last-good，但 `collected_at` 不刷新；沒有 last-good 時在第一次 typed 結果前是 `snapshot_not_ready`。
 
 ## Polling
 
 - Codex／Cursor：啟用後立刻收一次，之後每 300 秒。timeout 20 秒傳給 adapter `deadline_seconds`。
-- 同 provider single-flight；錯過的 tick 不堆積，slot 空了最多補一次。
+- 同 provider 同時最多一個 in-flight job（含舊 generation）。off→on 等舊 job 結束後立刻 refresh，不接續舊 generation，也不另佔一條 worker。
+- 錯過的 tick 不堆積，slot 空了最多補一次。
 - 成功：下一輪以 start+300 為準（過期則立刻一次）。
 - 失敗：不在同一 job 內重試。下次等待 300 → 600 → 900 秒後封頂。re-enable 重置失敗計數。
 - 單一 worker 不得串行擋住其他 provider。執行緒上限是 polled provider 數量（2），禁止無限制 pool。
@@ -54,7 +55,7 @@ Scheduler 只接線。它不得複製 second merge／fallback，也不得在 GET
 ## Instance lock and shutdown
 
 - 同一 `RuntimePaths.config_dir` 只能有一個 service。第二個 instance 拒絕啟動；錯誤不含 path 或 secret。
-- lock file：`config_dir/service.lock`。start 可建立 private config dir，但不因此啟用 provider。
+- lock file：`config_dir/service.lock`。以 `O_NOFOLLOW` 開啟，拒絕 symlink。start 可建立缺的 private config dir，但不得把既有過寬目錄 chmod 成 `0700` 來通過 settings 檢查。
 - SIGINT／SIGTERM：停新排程、bump generation、等待 in-flight（上限 `POLL_TIMEOUT_SECONDS + 5`）、flush 有效 cache、釋放鎖。
 - Adapter 必須遵守 `deadline_seconds`。Python thread 殺不掉；shutdown 後晚到結果仍被 generation 丟掉。
 

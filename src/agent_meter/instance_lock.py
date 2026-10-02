@@ -15,9 +15,15 @@ from __future__ import annotations
 
 import fcntl
 import os
+import stat
 
 from agent_meter.paths import RuntimePaths
-from agent_meter.private_files import PrivateFileError, prepare_private_dir
+from agent_meter.private_files import (
+    PrivateFileError,
+    is_absent,
+    prepare_private_dir,
+    reject_unsafe_dir,
+)
 
 LOCK_FILE_MODE = 0o600
 
@@ -52,15 +58,24 @@ class ServiceInstanceLock:
         if self._fd is not None:
             return
         try:
-            prepare_private_dir(self._paths.config_dir)
+            self._prepare_lock_dir()
+            lock_path = self._paths.service_lock_file
+            if lock_path.is_symlink():
+                raise PrivateFileError()
+            flags = os.O_CREAT | os.O_RDWR
+            if hasattr(os, "O_NOFOLLOW"):
+                flags |= os.O_NOFOLLOW
             fd = os.open(
-                self._paths.service_lock_file,
-                os.O_CREAT | os.O_RDWR,
+                lock_path,
+                flags,
                 LOCK_FILE_MODE,
             )
         except (PrivateFileError, OSError):
             raise ServiceLockError() from None
         try:
+            info = os.fstat(fd)
+            if not stat.S_ISREG(info.st_mode):
+                raise OSError()
             os.fchmod(fd, LOCK_FILE_MODE)
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
@@ -70,6 +85,16 @@ class ServiceInstanceLock:
             os.close(fd)
             raise ServiceLockError() from None
         self._fd = fd
+
+    def _prepare_lock_dir(self) -> None:
+        # SECURITY: 既有 config_dir 不得在 load() 前被 chmod 成 0700，否則
+        # world-writable 目錄裡的 settings.json 會通過 private-mode 檢查並
+        # 開始 live poll（PR #10）。缺目錄才建立；symlink／非目錄仍拒絕。
+        config_dir = self._paths.config_dir
+        if is_absent(config_dir):
+            prepare_private_dir(config_dir)
+            return
+        reject_unsafe_dir(config_dir, require_private_mode=False)
 
     def release(self) -> None:
         fd = self._fd
