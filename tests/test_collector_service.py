@@ -115,20 +115,22 @@ class SpyFactory(ProviderCollectorFactory):
         ) -> ProviderCollectionSuccess | ProviderCollectionFailure:
             with self._lock:
                 self.enter_counts[provider_id] = self.enter_counts.get(provider_id, 0) + 1
+                # Bind the configured result at enter so overlapping jobs cannot
+                # race on a later set_result() or a shared post-gate sequence.
+                bound = self._results[provider_id]
             entered.set()
             gate = self._blocks.get(provider_id)
             if gate is not None:
                 gate.wait(timeout=30)
             with self._lock:
                 self.collect_calls.append((provider_id, now, deadline_seconds))
-            result = self._results[provider_id]
-            if isinstance(result, BaseException):
-                raise result
-            if callable(result) and not isinstance(
-                result, (ProviderCollectionSuccess, ProviderCollectionFailure)
+            if isinstance(bound, BaseException):
+                raise bound
+            if callable(bound) and not isinstance(
+                bound, (ProviderCollectionSuccess, ProviderCollectionFailure)
             ):
-                return result(now=now, deadline_seconds=deadline_seconds)  # type: ignore[no-any-return]
-            return result  # type: ignore[no-any-return]
+                return bound(now=now, deadline_seconds=deadline_seconds)  # type: ignore[no-any-return]
+            return bound  # type: ignore[no-any-return]
 
         return collect
 
@@ -438,26 +440,19 @@ def test_disable_during_collection_discards_late_success_and_failure(tmp_path: P
 def test_reenable_does_not_apply_previous_generation(tmp_path: Path) -> None:
     factory = SpyFactory()
     gate = factory.block("codex")
-    sequence = {"n": 0}
-
-    def _result(*, now: int, deadline_seconds: float) -> ProviderCollectionSuccess:
-        del now, deadline_seconds
-        sequence["n"] += 1
-        return _codex_ok(collected_at=sequence["n"])
-
-    factory.set_result("codex", _result)
+    factory.set_result("codex", _codex_ok(collected_at=1))
     clocks = FakeClocks()
     service, paths, _logs = _make_service(tmp_path, factory, clocks)
     _save_settings(paths, "codex")
     service.start()
     try:
-        _wait_until(
-            lambda: factory.entered.get("codex") is not None and factory.entered["codex"].is_set()
-        )
+        _wait_until(lambda: factory.enter_counts.get("codex", 0) >= 1)
         service.apply_settings(SettingsWriteRequest(expected_revision=1, enabled_providers=[]))
+        factory.set_result("codex", _codex_ok(collected_at=2))
         service.apply_settings(
             SettingsWriteRequest(expected_revision=2, enabled_providers=["codex"])
         )
+        _wait_until(lambda: factory.enter_counts.get("codex", 0) >= 2)
         gate.set()
         _wait_collects(factory, 2)
         snapshot = _wait_usage_snapshot(service)
@@ -580,14 +575,7 @@ def test_same_instance_stop_then_start_reschedules_polls(tmp_path: Path) -> None
 def test_restart_discards_late_job_from_previous_run(tmp_path: Path) -> None:
     factory = SpyFactory()
     gate = factory.block("codex")
-    sequence = {"n": 0}
-
-    def _result(*, now: int, deadline_seconds: float) -> ProviderCollectionSuccess:
-        del now, deadline_seconds
-        sequence["n"] += 1
-        return _codex_ok(collected_at=sequence["n"])
-
-    factory.set_result("codex", _result)
+    factory.set_result("codex", _codex_ok(collected_at=1))
     clocks = FakeClocks()
     service, paths, _logs = _make_service(tmp_path, factory, clocks, shutdown_deadline_seconds=0.2)
     _save_settings(paths, "codex")
@@ -595,6 +583,7 @@ def test_restart_discards_late_job_from_previous_run(tmp_path: Path) -> None:
     try:
         _wait_until(lambda: factory.enter_counts.get("codex", 0) >= 1)
         service.stop()
+        factory.set_result("codex", _codex_ok(collected_at=2))
         service.start()
         _wait_until(lambda: factory.enter_counts.get("codex", 0) >= 2)
         gate.set()
