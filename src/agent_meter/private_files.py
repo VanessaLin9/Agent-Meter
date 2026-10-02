@@ -20,6 +20,7 @@ import tempfile
 from collections.abc import Callable
 from pathlib import Path
 
+ANCESTOR_DIR_MODE = 0o755
 DIR_MODE = 0o700
 FILE_MODE = 0o600
 
@@ -56,15 +57,37 @@ def reject_unsafe_file(path: Path) -> None:
         raise PrivateFileError()
 
 
+def _ensure_real_ancestors(path: Path) -> None:
+    """Create missing parents as real directories. Never chmod them 0700.
+
+    `Library` / `Application Support` / `Caches` are shared user dirs. Only
+    Agent Meter leaves are private. A symlink anywhere in the chain is
+    refused so mkdir cannot follow it（PR #9）。
+    """
+
+    missing: list[Path] = []
+    current = path
+    while is_absent(current):
+        if current.parent == current:
+            raise PrivateFileError()
+        missing.append(current)
+        current = current.parent
+    reject_unsafe_dir(current, require_private_mode=False)
+    for ancestor in reversed(missing):
+        if ancestor.is_symlink():
+            raise PrivateFileError()
+        ancestor.mkdir(mode=ANCESTOR_DIR_MODE, exist_ok=True)
+        if ancestor.is_symlink() or not ancestor.is_dir():
+            raise PrivateFileError()
+
+
 def prepare_private_dir(path: Path) -> None:
-    # SECURITY: never mkdir(parents=True). Intermediate dirs inherit umask
-    # and can land as 0755, then later lstat of a nested leaf follows a
-    # symlink parent（PR #9）。Callers create each runtime dir from the store
-    # root down as 0700.
+    # SECURITY: never mkdir(parents=True). Intermediate Agent Meter dirs
+    # inherit umask and can land as 0755; lstat of a nested leaf also
+    # follows a symlink parent（PR #9）。Owned leaves are 0700; missing
+    # shared ancestors are created separately without that mode.
+    _ensure_real_ancestors(path.parent)
     if path.is_symlink():
-        raise PrivateFileError()
-    parent = path.parent
-    if parent.is_symlink():
         raise PrivateFileError()
     if path.exists() and not path.is_dir():
         raise PrivateFileError()

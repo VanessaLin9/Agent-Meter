@@ -87,6 +87,20 @@ def test_save_then_new_store_load_round_trips(tmp_path: Path) -> None:
     )
 
 
+def test_first_save_succeeds_when_library_caches_is_missing(tmp_path: Path) -> None:
+    paths = resolve_runtime_paths(home=tmp_path)
+    caches = tmp_path / "Library" / "Caches"
+    assert not caches.exists()
+    SnapshotCacheStore(paths).save(_snapshot())
+    assert stat.S_IMODE(paths.cache_dir.stat().st_mode) == 0o700
+    assert stat.S_IMODE(paths.snapshot_cache_dir.stat().st_mode) == 0o700
+    assert caches.is_dir()
+    assert not caches.is_symlink()
+    loaded = SnapshotCacheStore(paths).load()
+    assert loaded.fault is None
+    assert loaded.snapshot is not None
+
+
 def test_restore_recomputes_freshness_without_touching_collected_at(tmp_path: Path) -> None:
     snapshot = _snapshot()
     original = snapshot.providers["codex"].collected_at

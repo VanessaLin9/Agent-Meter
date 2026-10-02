@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from agent_meter.paths import resolve_runtime_paths
+from agent_meter.paths import APP_DIR_NAME, resolve_runtime_paths
 from agent_meter.settings import (
     SettingsWriteRequest,
     dump_settings,
@@ -65,6 +65,34 @@ def test_round_trip_survives_new_store_instance(tmp_path: Path) -> None:
     payload = json.loads((tmp_path / "config" / "settings.json").read_text(encoding="utf-8"))
     assert payload == dump_settings(saved)
     assert parse_settings(payload) == saved
+
+
+def test_first_save_succeeds_when_application_support_is_missing(tmp_path: Path) -> None:
+    paths = resolve_runtime_paths(home=tmp_path)
+    support = tmp_path / "Library" / "Application Support"
+    assert not support.exists()
+    saved = SettingsStore(paths).save(_write_request("codex", expected_revision=0))
+    assert saved.revision == 1
+    assert saved.enabled_providers == ["codex"]
+    assert stat.S_IMODE(paths.config_dir.stat().st_mode) == 0o700
+    assert stat.S_IMODE(paths.settings_file.stat().st_mode) == 0o600
+    assert support.is_dir()
+    assert not support.is_symlink()
+    assert not paths.config_dir.is_symlink()
+    assert SettingsStore(paths).load() == saved
+    assert (tmp_path / "Library" / "Application Support" / APP_DIR_NAME) == paths.config_dir
+
+
+def test_symlink_application_support_is_rejected_on_save(tmp_path: Path) -> None:
+    library = tmp_path / "Library"
+    library.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    os.symlink(outside, library / "Application Support")
+    store = SettingsStore(resolve_runtime_paths(home=tmp_path))
+    with pytest.raises(SettingsSaveError):
+        store.save(_write_request("codex", expected_revision=0))
+    assert list(outside.iterdir()) == []
 
 
 def test_cas_conflict_does_not_change_disk(tmp_path: Path) -> None:
