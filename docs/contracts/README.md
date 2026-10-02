@@ -7,6 +7,7 @@
 - [`usage-api.md`](usage-api.md)：normalized snapshot 與 HTTP semantics。
 - [`settings.md`](settings.md)：provider enablement document、path layout、CAS 與權限。
 - [`cache.md`](cache.md)：disk last-good envelope、重啟投影與 persistence fault。
+- [`collector-service.md`](collector-service.md)：常駐 lifecycle、generation fencing、單實例鎖與排程。
 - [`desktop-service.md`](desktop-service.md)：GET/PUT DTO、三種 503、health state、停用 race。
 - [`provider-adapter.md`](provider-adapter.md)：adapter responsibility、result 與 failure taxonomy。
 - [`security-and-testing.md`](security-and-testing.md)：credential boundary、redaction、fixtures 與 CI 規則。

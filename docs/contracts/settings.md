@@ -59,4 +59,4 @@ macOS 預設：
 - Typed settings：`src/agent_meter/settings.py`
 - Path resolver：`src/agent_meter/paths.py`
 - Disk CAS：`src/agent_meter/settings_store.py`
-- Retry／runtime apply／generation fencing：尚未實作的 desktop service（B2-03）
+- Retry／runtime apply／generation fencing：`src/agent_meter/collector_service.py`

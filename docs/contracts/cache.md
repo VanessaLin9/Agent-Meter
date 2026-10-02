@@ -34,4 +34,5 @@ GET /usage 200 仍是 [`usage-api.md`](usage-api.md)。本檔只定義 checkout 
 
 - Merge／freshness：`src/agent_meter/cache.py`、`freshness.py`、`aggregation.py`（無 I/O）
 - Disk store／protocol：`src/agent_meter/cache_store.py`
+- Resident apply／generation：`src/agent_meter/collector_service.py`
 - HTTP：尚未建立；只能拿到 projected `UsageSnapshot` 或既有 503 envelope

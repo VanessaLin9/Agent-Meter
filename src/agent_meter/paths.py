@@ -19,6 +19,7 @@ from pathlib import Path
 # SECURITY: runtime files stay under the user Library, never the repo（PR #8）。
 APP_DIR_NAME = "Agent Meter"
 SETTINGS_FILE_NAME = "settings.json"
+LOCK_FILE_NAME = "service.lock"
 SNAPSHOT_CACHE_DIR_NAME = "snapshots"
 MAILBOX_DIR_NAME = "mailbox"
 
@@ -33,6 +34,10 @@ class RuntimePaths:
     @property
     def settings_file(self) -> Path:
         return self.config_dir / SETTINGS_FILE_NAME
+
+    @property
+    def service_lock_file(self) -> Path:
+        return self.config_dir / LOCK_FILE_NAME
 
     @property
     def snapshot_cache_dir(self) -> Path:
