@@ -17,6 +17,7 @@ def test_macos_library_paths_are_composed_from_injected_home(tmp_path: Path) -> 
     assert paths.snapshot_cache_dir == paths.cache_dir / "snapshots"
     assert paths.snapshot_cache_file == paths.snapshot_cache_dir / "snapshot.json"
     assert paths.mailbox_dir == paths.cache_dir / "mailbox"
+    assert paths.service_lock_file == paths.config_dir / "service.lock"
     assert paths.config_dir != Path.cwd()
     assert Path.cwd() not in paths.config_dir.parents
 

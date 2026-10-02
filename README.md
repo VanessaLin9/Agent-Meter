@@ -12,7 +12,7 @@ Repository 只保存程式碼、測試、執行文件，以及實作所需的 AP
 
 ## Collector development
 
-Normalized usage models、aggregation／stale policy、Claude Code status-line adapter、Codex app-server adapter、Cursor Connect RPC adapter、一次收集三個 provider 的 orchestrator、desktop settings store，以及可重啟恢復的 disk cache 已落地。還沒有 Collector HTTP API 或 scheduler。
+Normalized usage models、aggregation／stale policy、Claude Code status-line adapter、Codex app-server adapter、Cursor Connect RPC adapter、一次收集三個 provider 的 orchestrator、desktop settings store、可重啟恢復的 disk cache，以及常駐 Collector scheduler 已落地。還沒有 Collector HTTP API。
 
 預設不讀 credential、不發 live request。本機已登入且要產出 gitignore 的 `usage.json` 時才加 `--live`：
 
@@ -27,6 +27,14 @@ uv run --locked python -m agent_meter --live --claude-statusline path/to/statusl
 ```
 
 stdout 是一份 schema-valid snapshot；diagnostics 在 stderr。產生的 `usage.json` 不得 commit。
+
+常駐 Collector（讀 checkout 外的 settings／cache，尚無 HTTP）在已勾選的 provider 上輪詢。空清單啟動時零 live I/O：
+
+```bash
+uv run --locked python -m agent_meter.service
+```
+
+SIGINT／SIGTERM 會做 bounded shutdown。同一 runtime 目錄不能同時跑兩個 instance。
 
 Claude ingest（stdin JSON → typed meters；diagnostics 在 stderr）：
 

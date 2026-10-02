@@ -11,6 +11,8 @@ is attempted once.
 
 Contract: `docs/contracts/usage-api.md` and
 `docs/contracts/provider-adapter.md`. Live Codex/Cursor access is opt-in.
+`invoke_collector` is the shared adapter boundary reused by the resident
+service; this module still does not own scheduling.
 """
 
 from __future__ import annotations
@@ -110,7 +112,7 @@ def collect_snapshot(
     resolved_settings = StaleSettings() if settings is None else settings
     results: list[ProviderCollectionSuccess | ProviderCollectionFailure] = []
     for provider_id in _provider_order(collectors):
-        result = _invoke_collector(
+        result = invoke_collector(
             provider_id,
             collectors[provider_id],
             now=now,
@@ -231,7 +233,7 @@ def _provider_order(collectors: Mapping[str, ProviderCollector]) -> tuple[str, .
     return known + extras
 
 
-def _invoke_collector(
+def invoke_collector(
     provider_id: str,
     collector: ProviderCollector,
     *,
