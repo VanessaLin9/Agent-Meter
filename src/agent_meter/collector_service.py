@@ -140,7 +140,7 @@ class CollectorService:
         self._runtime_settings: Settings | None = None
         self._enabled: tuple[EnabledProvider, ...] = ()
         self._generations: dict[EnabledProvider, int] = dict.fromkeys(ENABLED_PROVIDER_IDS, 0)
-        self._in_flight: set[EnabledProvider] = set()
+        self._in_flight: dict[EnabledProvider, int] = {}
         self._next_due: dict[EnabledProvider, float] = {}
         self._last_start: dict[EnabledProvider, float] = {}
         self._failures: dict[EnabledProvider, int] = {}
@@ -193,7 +193,14 @@ class CollectorService:
                 self._running = False
                 for provider_id in ENABLED_PROVIDER_IDS:
                     self._bump_generation(provider_id)
+                # CONTRACT: stop 後必須清空 enabled，否則同一 instance 再 start
+                # 時 _commit_enabled 會以為沒有新增 provider，就不排程（PR #10）。
+                self._enabled = ()
+                self._runtime_settings = None
                 self._next_due.clear()
+                self._failures.clear()
+                self._collectors.clear()
+                self._last_start.clear()
             self._wakeup.notify()
             scheduler = self._scheduler
             pool = self._pool
@@ -341,7 +348,7 @@ class CollectorService:
         for provider_id in self._enabled:
             if provider_id not in POLLED_PROVIDER_IDS:
                 continue
-            if provider_id in self._in_flight:
+            if self._in_flight.get(provider_id) == self._generations[provider_id]:
                 continue
             scheduled = self._next_due.get(provider_id)
             if scheduled is not None and scheduled <= now:
@@ -352,7 +359,10 @@ class CollectorService:
         now = self._mono.monotonic()
         waits: list[float] = []
         for provider_id in self._enabled:
-            if provider_id not in POLLED_PROVIDER_IDS or provider_id in self._in_flight:
+            if (
+                provider_id not in POLLED_PROVIDER_IDS
+                or self._in_flight.get(provider_id) == self._generations[provider_id]
+            ):
                 continue
             scheduled = self._next_due.get(provider_id)
             if scheduled is None:
@@ -367,12 +377,12 @@ class CollectorService:
             if (
                 not self._running
                 or provider_id not in self._enabled
-                or provider_id in self._in_flight
+                or self._in_flight.get(provider_id) == self._generations[provider_id]
                 or provider_id not in POLLED_PROVIDER_IDS
             ):
                 return
-            self._in_flight.add(provider_id)
             generation = self._generations[provider_id]
+            self._in_flight[provider_id] = generation
             self._last_start[provider_id] = self._mono.monotonic()
         pool = self._pool
         if pool is None:
@@ -420,7 +430,8 @@ class CollectorService:
         discarded = False
         retry = 0
         with self._state_lock:
-            self._in_flight.discard(provider_id)
+            if self._in_flight.get(provider_id) == generation:
+                self._in_flight.pop(provider_id, None)
             if (
                 not self._running
                 or provider_id not in self._enabled
