@@ -20,7 +20,8 @@ Machine-readable sources:
 | Settings write v1 | `src/agent_meter/settings.py` | PUT /settings body |
 | Health v1 | `src/agent_meter/service_models.py` | GET /health |
 | Error envelope v1 | `src/agent_meter/service_models.py` | 非 snapshot 的 HTTP error |
-| Enablement / 503 決策 | `src/agent_meter/service_policy.py` | 未來 API 與 scheduler |
+| Enablement / 503 決策 | `src/agent_meter/service_policy.py` | API 與 scheduler |
+| Resident lifecycle | `src/agent_meter/collector_service.py` | start/stop、poll、generation |
 | Disk cache v1 | `src/agent_meter/cache_store.py` | 重啟恢復；不得當 GET /usage body |
 
 HTTP error envelope **不是** usage snapshot。不得把它送進 `parse_usage_snapshot`。usage v0.1 schema 維持 `providers` 至少一個 key；空清單不得靠新增 `disabled` status 或空 `providers` 混進 200。
@@ -83,12 +84,15 @@ Body：`expected_revision` + `enabled_providers`。成功 回新 settings docume
 
 `config_error` 不得偽裝成 `no_enabled_providers`。
 
-## Polling (scheduler not in this change)
+## Polling
 
-- Codex／Cursor：每 300 秒、timeout 20 秒。同 provider single-flight，不堆積錯過的 tick。
-- 失敗後下次 retry 退避上限 900 秒；一次排程內不無限 retry。
+實作於 `src/agent_meter/collector_service.py`。節奏數字在 `service_policy.py`。
+
+- Codex／Cursor：啟用後立刻收一次，之後每 300 秒、timeout 20 秒。同 provider single-flight，不堆積錯過的 tick。
+- 失敗後下次 retry 退避 300 → 600 → 900 秒；一次 job 內不無限 retry。
 - `stale_after_seconds` 預設 900，沿用既有 freshness 邊界。
 - Claude 是 event-driven mailbox，不套用這個 poller。
+- GET /usage 只讀已產生的投影並重算 age，不觸發 provider request。
 
 ## Fallback summary
 

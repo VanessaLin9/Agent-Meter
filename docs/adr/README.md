@@ -6,3 +6,4 @@
 | --- | --- |
 | [0001](0001-collector-python-foundation.md) | Collector foundation uses Python 3.12 and uv quality tooling |
 | [0002](0002-desktop-settings-and-service-dtos.md) | Desktop settings live outside the checkout with separate service DTOs |
+| [0003](0003-resident-collector-lifecycle.md) | Resident collector uses per-provider generation and dual clocks |

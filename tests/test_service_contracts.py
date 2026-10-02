@@ -36,6 +36,7 @@ from agent_meter.service_policy import (
     enabled_provider_ids,
     health_document,
     is_complete_enabled_snapshot,
+    poll_retry_delay_seconds,
     usage_error,
 )
 from agent_meter.settings import (
@@ -257,3 +258,8 @@ def test_polling_constants_match_desktop_contract() -> None:
     assert STALE_AFTER_SECONDS == DEFAULT_STALE_AFTER_SECONDS == 900
     assert POLLED_PROVIDER_IDS == ("codex", "cursor")
     assert EVENT_DRIVEN_PROVIDER_IDS == ("claude",)
+    assert poll_retry_delay_seconds(0) == 300
+    assert poll_retry_delay_seconds(1) == 300
+    assert poll_retry_delay_seconds(2) == 600
+    assert poll_retry_delay_seconds(3) == 900
+    assert poll_retry_delay_seconds(8) == 900

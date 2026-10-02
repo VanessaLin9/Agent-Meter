@@ -1,12 +1,13 @@
 """Desktop-service enablement and HTTP decision helpers（PR #8）.
 
 Responsibility: decide which providers belong in a snapshot, which GET /usage
-503 applies, and which GET /health state applies. Non-goals: filesystem,
-FastAPI, scheduling, or adapter I/O.
+503 applies, and which GET /health state applies. Also owns poll cadence
+numbers used by the resident scheduler. Non-goals: filesystem, FastAPI, or
+adapter I/O.
 
 Inputs: a loaded Settings document (or None when config is unreadable) plus
 an optional schema-valid snapshot. Outputs: ServiceError / HealthDocument.
-Units: poll interval and timeouts are seconds.
+Units: poll interval, timeout, and backoff are seconds.
 
 Contract: `docs/contracts/desktop-service.md`. The API layer maps these
 documents to HTTP; this module does not import a web framework.
@@ -23,7 +24,7 @@ from agent_meter.settings import EnabledProvider, Settings
 
 # CONTRACT: Codex/Cursor poll cadence for the desktop service. Claude is
 # event-driven and must not use this poller. Adapter transport may use a
-# tighter deadline; B2-03 owns the scheduler.
+# tighter deadline; the resident scheduler always passes POLL_TIMEOUT_SECONDS.
 POLL_INTERVAL_SECONDS = 300
 POLL_TIMEOUT_SECONDS = 20
 RETRY_BACKOFF_CAP_SECONDS = 900
@@ -51,6 +52,25 @@ CACHE_ERROR = ServiceError(
     code="cache_error",
     message="Usage cache could not be used",
 )
+
+
+def poll_retry_delay_seconds(consecutive_failures: int) -> int:
+    """Seconds until the next poll. Zero failures keep the 300s cadence.
+
+    CONTRACT: one job does not retry internally. Repeated failures grow 300 →
+    600 → 900 and then stay capped. Re-enable resets the counter（B2-03）.
+    """
+
+    if consecutive_failures < 0:
+        raise ValueError("consecutive_failures must be >= 0")
+    if consecutive_failures == 0:
+        return POLL_INTERVAL_SECONDS
+    delay = POLL_INTERVAL_SECONDS
+    for _ in range(consecutive_failures - 1):
+        delay *= 2
+        if delay >= RETRY_BACKOFF_CAP_SECONDS:
+            return RETRY_BACKOFF_CAP_SECONDS
+    return delay
 
 
 def enabled_provider_ids(settings: Settings) -> tuple[EnabledProvider, ...]:
