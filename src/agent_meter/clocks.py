@@ -1,4 +1,4 @@
-"""Injectable wall and monotonic clocks for the resident Collector（B2-03）.
+"""Injectable wall and monotonic clocks for the resident Collector（PR #10）.
 
 Responsibility: separate timestamping from scheduling so tests can drive
 cadence without sleeping on the system clock. Non-goals: freshness policy,
@@ -61,8 +61,8 @@ class SystemMonotonicClock:
 class ConditionWakeup:
     """threading.Condition waiter. timeout is real seconds.
 
-    CONTRACT: notify before wait must not be lost. A pending flag covers the
-    gap between computing the next sleep and entering wait.
+    CONTRACT: notify 發生在 wait 之前也不可遺失（PR #10）。pending flag 補上
+    「算完下一輪 sleep 到進入 wait」這段空窗。
     """
 
     def __init__(self) -> None:

@@ -1,4 +1,4 @@
-"""Single-instance lock for one Collector service per runtime directory（B2-03）.
+"""Single-instance lock for one Collector service per runtime directory（PR #10）.
 
 Responsibility: exclusive-lock the desktop state directory so a second
 process cannot share cache/settings writers. Non-goals: HTTP, scheduling,
@@ -46,8 +46,7 @@ class ServiceInstanceLock:
     def acquire(self) -> None:
         """Create the private config dir if needed and take LOCK_EX|LOCK_NB.
 
-        SECURITY: never include the lock path or OSError text in the raised
-        error; those strings can contain the local account directory.
+        SECURITY: 錯誤不得含 lock path 或 OSError 原文；可能含本機帳號目錄（PR #10）。
         """
 
         if self._fd is not None:
