@@ -36,7 +36,8 @@ macOS 預設：
 ## Filesystem rules
 
 - 缺檔（且不是 dangling symlink）視為首次安裝：`enabled_providers=[]`、`revision=0`，不自動建檔。
-- 目錄 `0700`、檔案 `0600`。既有 settings 檔若權限過寬、不是普通檔、或為 symlink，視為 `config_error`。
+- 目錄 `0700`、檔案 `0600` 適用於 `Agent Meter` 與其中的檔案。缺的 `Library`／`Application Support` 可逐層建立為普通目錄，不得 `mkdir(parents=True)`，也不得把祖先 chmod 成 `0700`。祖先若是 symlink 或非目錄 → `save_failed`。
+- 既有 settings 檔若權限過寬、不是普通檔、或為 symlink，視為 `config_error`。
 - 讀取 bounded（16 KiB）。更大、非 UTF-8、非 JSON object、驗證失敗都是 `config_error`。
 - 損壞檔、未知版本、讀取拒絕：不啟用任何 provider、不自動覆寫原檔。
 - 寫入必須 atomic replace。replace 失敗回 `save_failed`，保留舊檔，不把半份 JSON 留給 reader。
