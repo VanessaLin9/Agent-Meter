@@ -24,7 +24,7 @@ from agent_meter.settings import EnabledProvider, Settings
 
 # CONTRACT: Codex/Cursor poll cadence for the desktop service. Claude is
 # event-driven and must not use this poller. Adapter transport may use a
-# tighter deadline; the resident scheduler always passes POLL_TIMEOUT_SECONDS.
+# tighter deadline; the resident scheduler always passes POLL_TIMEOUT_SECONDS（PR #10）。
 POLL_INTERVAL_SECONDS = 300
 POLL_TIMEOUT_SECONDS = 20
 RETRY_BACKOFF_CAP_SECONDS = 900
@@ -58,7 +58,7 @@ def poll_retry_delay_seconds(consecutive_failures: int) -> int:
     """Seconds until the next poll. Zero failures keep the 300s cadence.
 
     CONTRACT: one job does not retry internally. Repeated failures grow 300 →
-    600 → 900 and then stay capped. Re-enable resets the counter（B2-03）.
+    600 → 900 and then stay capped. Re-enable resets the counter（PR #10）。
     """
 
     if consecutive_failures < 0:

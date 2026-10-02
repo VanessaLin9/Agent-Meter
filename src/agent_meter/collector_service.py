@@ -1,4 +1,4 @@
-"""Resident Collector lifecycle, scheduling, and generation fencing（B2-03）.
+"""Resident Collector lifecycle, scheduling, and generation fencing（PR #10）.
 
 Responsibility: start/stop one service instance, apply settings after CAS
 persist, poll Codex/Cursor independently, and expose read-only usage/health
@@ -66,7 +66,7 @@ from agent_meter.settings import (
 )
 from agent_meter.settings_store import SettingsConfigError, SettingsStore
 
-# CONTRACT: shutdown waits this long for in-flight jobs, then continues.
+# CONTRACT: shutdown waits this long for in-flight jobs, then continues（PR #10）。
 # Adapters must honor deadline_seconds; leftover threads cannot be killed.
 SHUTDOWN_DEADLINE_SECONDS = POLL_TIMEOUT_SECONDS + 5.0
 
@@ -76,8 +76,8 @@ _PROVIDER_SOURCES: dict[str, str] = {
     CURSOR_PROVIDER_ID: CURSOR_SOURCE,
 }
 
-# FALLBACK: Claude is an event source. Until B2-05 delivers a mailbox event,
-# enabled-without-last-good is not_configured / unavailable, not a live API call.
+# FALLBACK: Claude 是 event source，不是 poller（PR #10）。B2-05 mailbox 到來前，
+# 啟用但沒有 last-good 時用 not_configured／unavailable，不呼叫 Claude API。
 CLAUDE_WAITING_FAILURE = ProviderCollectionFailure(
     provider_id=CLAUDE_PROVIDER_ID,
     source=CLAUDE_SOURCE,
@@ -151,8 +151,8 @@ class CollectorService:
     def start(self) -> None:
         """Load settings + cache, take the instance lock, and start the scheduler.
 
-        SECURITY: enabled_providers=[] performs zero live adapter I/O. Session
-        reads wait until a polled job actually runs.
+        SECURITY: enabled_providers=[] 零 live adapter I/O（PR #10）。session 讀取
+        延後到 enabled poll job 真正執行。
         """
 
         with self._apply_lock:
@@ -217,7 +217,7 @@ class CollectorService:
     def apply_settings(self, request: SettingsWriteRequest) -> Settings:
         """Persist first, then commit runtime. Failure leaves the previous generation."""
 
-        # CONTRACT: success means the new enabled set is already active（B2-03）.
+        # CONTRACT: persist 成功後 runtime 才生效；成功回傳＝新清單已在跑（PR #10）。
         with self._apply_lock:
             saved = self._settings_store.save(request)
             with self._state_lock:
@@ -226,7 +226,10 @@ class CollectorService:
             return saved
 
     def usage(self) -> UsageSnapshot | ErrorEnvelope:
-        """Read the current projection and re-evaluate age. Never starts a collect."""
+        """Read the current projection and re-evaluate age. Never starts a collect.
+
+        CONTRACT: GET consumer 不得觸發 provider request（PR #10）。
+        """
 
         try:
             with self._state_lock:
@@ -262,7 +265,7 @@ class CollectorService:
         *,
         generation: int,
     ) -> None:
-        """Apply a typed Claude event. B2-05 owns mailbox I/O; this only fences."""
+        """Apply a typed Claude event. B2-05 owns mailbox I/O; this only fences（PR #10）。"""
 
         sanitized = invoke_collector(
             CLAUDE_PROVIDER_ID,
@@ -298,6 +301,7 @@ class CollectorService:
         added = new - previous
         self._runtime_settings = settings
         for provider_id in removed:
+            # CONTRACT: disable 與 re-enable 都 bump generation，晚到結果不可回流（PR #10）。
             self._bump_generation(provider_id)
             self._next_due.pop(provider_id, None)
             self._failures.pop(provider_id, None)
@@ -422,6 +426,7 @@ class CollectorService:
                 or provider_id not in self._enabled
                 or self._generations.get(provider_id) != generation
             ):
+                # CONTRACT: 舊 generation 的 success／failure 都不寫 cache（PR #10）。
                 discarded = True
             else:
                 self._apply_merge(result)

@@ -1,4 +1,4 @@
-"""Lazy provider collector factory for the resident service（B2-03）.
+"""Lazy provider collector factory for the resident service（PR #10）.
 
 Responsibility: hand out per-provider collect callables without reading
 login state, spawning processes, or sending network requests at factory
@@ -32,9 +32,8 @@ class ProviderCollectorFactory:
 class LazyLiveCollectorFactory(ProviderCollectorFactory):
     """Bind Codex/Cursor adapters only inside the collect callable.
 
-    SECURITY: importing this module, constructing the factory, or calling
-    collector_for must not read Cursor session files or spawn Codex.
-    Disabled providers never call collector_for.
+    SECURITY: 建構 factory 或呼叫 collector_for 不得讀 Cursor session、也不得
+    spawn Codex（PR #10）。disabled provider 根本不會走到 collector_for。
     """
 
     def __init__(self, *, stderr: TextIO | None = None) -> None:

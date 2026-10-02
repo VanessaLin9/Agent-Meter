@@ -1,4 +1,4 @@
-"""Headless desktop Collector entrypoint. No HTTP（B2-03）.
+"""Headless desktop Collector entrypoint. No HTTP（PR #10）.
 
 Responsibility: construct CollectorService from default runtime paths and
 run until SIGINT/SIGTERM. Non-goals: bind address, FastAPI, or auto-start
