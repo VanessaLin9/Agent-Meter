@@ -164,12 +164,13 @@ class CollectorService:
         延後到 enabled poll job 真正執行。
         """
 
+        persist = False
         with self._apply_lock:
             if self._running:
                 return
             self._instance_lock.acquire()
             try:
-                self._restore()
+                persist = self._restore()
                 self._pool = ThreadPoolExecutor(
                     max_workers=len(POLLED_PROVIDER_IDS),
                     thread_name_prefix="agent-meter-collect",
@@ -183,6 +184,7 @@ class CollectorService:
                 )
                 self._scheduler.start()
             except Exception:
+                persist = False
                 self._running = False
                 self._started = False
                 if self._pool is not None:
@@ -191,6 +193,8 @@ class CollectorService:
                 self._instance_lock.release()
                 raise
         self._wakeup.notify()
+        if persist:
+            self._persist_cache()
 
     def stop(self) -> None:
         """Stop scheduling, isolate in-flight generations, flush cache, release lock."""
@@ -226,7 +230,7 @@ class CollectorService:
                 # 否則 fsync 卡住會超過 POLL_TIMEOUT+5 的 shutdown 上限（PR #10）。
                 pool.shutdown(wait=idle, cancel_futures=True)
             if self._cache.stored is not None:
-                self._persist_cache(timeout=None if idle else 0.0)
+                self._persist_cache(timeout=0.0)
             self._instance_lock.release()
             self._started = False
 
@@ -236,16 +240,19 @@ class CollectorService:
         # CONTRACT: persist 成功後 runtime 才生效；成功回傳＝新清單已在跑（PR #10）。
         # stop 後／start 前不得 commit _enabled，否則再 start 會以為沒有新增
         # provider，就不重建 _next_due。
+        persist = False
         with self._apply_lock:
             if not self._running:
                 raise ServiceNotRunningError()
             saved = self._settings_store.save(request)
             with self._state_lock:
                 persist = self._commit_enabled(saved)
-            if persist:
-                self._persist_cache()
             self._wakeup.notify()
-            return saved
+        # CONTRACT: Claude waiting persist 不得佔 _apply_lock，否則 stop 進不去
+        # bounded shutdown（PR #10）。
+        if persist:
+            self._persist_cache()
+        return saved
 
     def usage(self) -> UsageSnapshot | ErrorEnvelope:
         """Read the current projection and re-evaluate age. Never starts a collect.
@@ -307,22 +314,20 @@ class CollectorService:
         if persist:
             self._persist_cache()
 
-    def _restore(self) -> None:
+    def _restore(self) -> bool:
         try:
             settings = self._settings_store.load()
         except SettingsConfigError:
             with self._state_lock:
                 self._runtime_settings = None
                 self._enabled = ()
-            return
+            return False
         self._cache.restore(settings)
         with self._state_lock:
             # CONTRACT: start 從 disk 重建排程，不信任 stop 後殘留的 _enabled（PR #10）。
             self._enabled = ()
             self._next_due.clear()
-            persist = self._commit_enabled(settings)
-        if persist:
-            self._persist_cache()
+            return self._commit_enabled(settings)
 
     def _commit_enabled(self, settings: Settings) -> bool:
         previous = set(self._enabled)

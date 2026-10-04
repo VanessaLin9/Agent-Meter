@@ -625,6 +625,59 @@ def test_stop_returns_within_deadline_while_persist_blocked(tmp_path: Path) -> N
     assert FAKE_SECRET not in logs.getvalue()
 
 
+def test_stop_returns_within_deadline_while_claude_enable_persist_blocked(
+    tmp_path: Path,
+) -> None:
+    factory = SpyFactory()
+    clocks = FakeClocks()
+    paths = _paths(tmp_path)
+    logs = io.StringIO()
+    entered = threading.Event()
+    persist_gate = threading.Event()
+
+    class BlockingCache(PersistentSnapshotCache):
+        def persist(self) -> None:
+            entered.set()
+            persist_gate.wait(timeout=30)
+            super().persist()
+
+    service = CollectorService(
+        paths,
+        wall_clock=clocks,
+        monotonic_clock=clocks,
+        wakeup=clocks,
+        collector_factory=factory,
+        cache=BlockingCache(SnapshotCacheStore(paths), clocks),
+        stderr=logs,
+        shutdown_deadline_seconds=0.2,
+    )
+    service.start()
+    failures: list[BaseException] = []
+
+    def _enable_claude() -> None:
+        try:
+            service.apply_settings(
+                SettingsWriteRequest(expected_revision=0, enabled_providers=["claude"])
+            )
+        except BaseException as exc:
+            failures.append(exc)
+
+    worker = threading.Thread(target=_enable_claude)
+    worker.start()
+    try:
+        _wait_until(entered.is_set)
+        started = time.monotonic()
+        service.stop()
+        elapsed = time.monotonic() - started
+        assert elapsed < 1.5
+    finally:
+        persist_gate.set()
+        worker.join(timeout=2)
+        service.stop()
+    assert failures == []
+    assert FAKE_SECRET not in logs.getvalue()
+
+
 def test_restart_restores_settings_and_last_good(tmp_path: Path) -> None:
     factory = SpyFactory()
     factory.set_result("codex", _timeout_failure("codex", CODEX_SOURCE))
