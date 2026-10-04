@@ -14,8 +14,8 @@ from typing import Any
 import pytest
 
 from agent_meter.cache import ProviderCollectionFailure, ProviderCollectionSuccess
-from agent_meter.cache_store import SnapshotCacheStore
-from agent_meter.collector_service import CollectorService
+from agent_meter.cache_store import PersistentSnapshotCache, SnapshotCacheStore
+from agent_meter.collector_service import CollectorService, ServiceNotRunningError
 from agent_meter.instance_lock import (
     ServiceAlreadyRunningError,
     ServiceInstanceLock,
@@ -512,6 +512,79 @@ def test_cas_conflict_leaves_runtime_unchanged(tmp_path: Path) -> None:
             )
         assert service.current_settings().enabled_providers == ["codex"]  # type: ignore[union-attr]
     finally:
+        service.stop()
+
+
+def test_apply_settings_while_stopped_does_not_dirty_enablement(tmp_path: Path) -> None:
+    factory = SpyFactory()
+    factory.set_result("codex", _codex_ok())
+    clocks = FakeClocks()
+    service, paths, _logs = _make_service(tmp_path, factory, clocks)
+    _save_settings(paths, "codex")
+    with pytest.raises(ServiceNotRunningError, match="not running"):
+        service.apply_settings(
+            SettingsWriteRequest(expected_revision=1, enabled_providers=["cursor"])
+        )
+    assert SettingsStore(paths).load().enabled_providers == ["codex"]
+    service.start()
+    try:
+        snapshot = _wait_usage_snapshot(service)
+        assert set(snapshot.providers) == {"codex"}
+        assert [item[0] for item in factory.collect_calls] == ["codex"]
+    finally:
+        service.stop()
+    with pytest.raises(ServiceNotRunningError, match="not running"):
+        service.apply_settings(
+            SettingsWriteRequest(expected_revision=1, enabled_providers=["cursor"])
+        )
+    assert SettingsStore(paths).load().enabled_providers == ["codex"]
+    service.start()
+    try:
+        _wait_until(lambda: len(factory.collect_calls) >= 2)
+        restored = _wait_usage_snapshot(service)
+        assert set(restored.providers) == {"codex"}
+    finally:
+        service.stop()
+
+
+def test_cache_persist_does_not_block_usage_reads(tmp_path: Path) -> None:
+    factory = SpyFactory()
+    factory.set_result("codex", _codex_ok())
+    clocks = FakeClocks()
+    paths = _paths(tmp_path)
+    logs = io.StringIO()
+    entered = threading.Event()
+    persist_gate = threading.Event()
+
+    class BlockingCache(PersistentSnapshotCache):
+        def persist(self) -> None:
+            entered.set()
+            persist_gate.wait(timeout=30)
+            super().persist()
+
+    service = CollectorService(
+        paths,
+        wall_clock=clocks,
+        monotonic_clock=clocks,
+        wakeup=clocks,
+        collector_factory=factory,
+        cache=BlockingCache(SnapshotCacheStore(paths), clocks),
+        stderr=logs,
+        shutdown_deadline_seconds=0.5,
+    )
+    _save_settings(paths, "codex")
+    service.start()
+    try:
+        _wait_until(entered.is_set)
+        started = time.monotonic()
+        view = service.usage()
+        assert time.monotonic() - started < 1.0
+        assert isinstance(view, UsageSnapshot)
+        persist_gate.set()
+        snapshot = _wait_usage_snapshot(service)
+        assert snapshot.providers["codex"].collected_at == NOW
+    finally:
+        persist_gate.set()
         service.stop()
 
 

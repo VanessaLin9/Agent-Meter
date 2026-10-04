@@ -70,6 +70,14 @@ from agent_meter.settings_store import SettingsConfigError, SettingsStore
 # Adapters must honor deadline_seconds; leftover threads cannot be killed.
 SHUTDOWN_DEADLINE_SECONDS = POLL_TIMEOUT_SECONDS + 5.0
 
+
+class ServiceNotRunningError(Exception):
+    """apply_settings is only valid while the scheduler is running."""
+
+    def __init__(self) -> None:
+        super().__init__("Collector service is not running")
+
+
 _PROVIDER_SOURCES: dict[str, str] = {
     CLAUDE_PROVIDER_ID: CLAUDE_SOURCE,
     CODEX_PROVIDER_ID: CODEX_SOURCE,
@@ -135,6 +143,7 @@ class CollectorService:
         )
         self._state_lock = Lock()
         self._apply_lock = Lock()
+        self._persist_lock = Lock()
         self._running = False
         self._started = False
         self._runtime_settings: Settings | None = None
@@ -213,11 +222,8 @@ class CollectorService:
                 with self._state_lock:
                     idle = not self._in_flight
                 pool.shutdown(wait=idle, cancel_futures=True)
-            try:
-                if self._cache.stored is not None:
-                    self._cache.persist()
-            except CacheSaveError:
-                pass
+            if self._cache.stored is not None:
+                self._persist_cache()
             self._instance_lock.release()
             self._started = False
 
@@ -225,10 +231,16 @@ class CollectorService:
         """Persist first, then commit runtime. Failure leaves the previous generation."""
 
         # CONTRACT: persist 成功後 runtime 才生效；成功回傳＝新清單已在跑（PR #10）。
+        # stop 後／start 前不得 commit _enabled，否則再 start 會以為沒有新增
+        # provider，就不重建 _next_due。
         with self._apply_lock:
+            if not self._running:
+                raise ServiceNotRunningError()
             saved = self._settings_store.save(request)
             with self._state_lock:
-                self._commit_enabled(saved)
+                persist = self._commit_enabled(saved)
+            if persist:
+                self._persist_cache()
             self._wakeup.notify()
             return saved
 
@@ -280,6 +292,7 @@ class CollectorService:
             now=self._wall.now(),
             deadline_seconds=POLL_TIMEOUT_SECONDS,
         )
+        persist = False
         with self._state_lock:
             if (
                 not self._running
@@ -287,7 +300,9 @@ class CollectorService:
                 or self._generations[CLAUDE_PROVIDER_ID] != generation
             ):
                 return
-            self._apply_merge(sanitized)
+            persist = self._apply_merge(sanitized)
+        if persist:
+            self._persist_cache()
 
     def _restore(self) -> None:
         try:
@@ -299,14 +314,20 @@ class CollectorService:
             return
         self._cache.restore(settings)
         with self._state_lock:
-            self._commit_enabled(settings)
+            # CONTRACT: start 從 disk 重建排程，不信任 stop 後殘留的 _enabled（PR #10）。
+            self._enabled = ()
+            self._next_due.clear()
+            persist = self._commit_enabled(settings)
+        if persist:
+            self._persist_cache()
 
-    def _commit_enabled(self, settings: Settings) -> None:
+    def _commit_enabled(self, settings: Settings) -> bool:
         previous = set(self._enabled)
         new = set(settings.enabled_providers)
         removed = previous - new
         added = new - previous
         self._runtime_settings = settings
+        persist = False
         for provider_id in removed:
             # CONTRACT: disable 與 re-enable 都 bump generation，晚到結果不可回流（PR #10）。
             self._bump_generation(provider_id)
@@ -318,15 +339,16 @@ class CollectorService:
             self._bump_generation(provider_id)
             self._failures[provider_id] = 0
             if provider_id == CLAUDE_PROVIDER_ID:
-                self._seed_claude_waiting()
+                persist = self._seed_claude_waiting() or persist
             elif provider_id in POLLED_PROVIDER_IDS:
                 self._next_due[provider_id] = self._mono.monotonic()
+        return persist
 
-    def _seed_claude_waiting(self) -> None:
+    def _seed_claude_waiting(self) -> bool:
         stored = self._cache.stored
         if stored is not None and CLAUDE_PROVIDER_ID in stored.providers:
-            return
-        self._apply_merge(CLAUDE_WAITING_FAILURE)
+            return False
+        return self._apply_merge(CLAUDE_WAITING_FAILURE)
 
     def _bump_generation(self, provider_id: EnabledProvider) -> None:
         self._generations[provider_id] = self._generations[provider_id] + 1
@@ -428,6 +450,7 @@ class CollectorService:
     ) -> None:
         discarded = False
         retry = 0
+        persist = False
         with self._state_lock:
             if self._in_flight.get(provider_id) == generation:
                 self._in_flight.pop(provider_id, None)
@@ -439,7 +462,7 @@ class CollectorService:
                 # CONTRACT: 舊 generation 的 success／failure 都不寫 cache（PR #10）。
                 discarded = True
             else:
-                self._apply_merge(result)
+                persist = self._apply_merge(result)
                 if isinstance(result, ProviderCollectionSuccess):
                     self._failures[provider_id] = 0
                     delay = float(POLL_INTERVAL_SECONDS)
@@ -456,18 +479,26 @@ class CollectorService:
             provider_id, result, duration=duration, retry=retry, discarded=discarded
         )
         self._wakeup.notify()
+        if persist:
+            self._persist_cache()
 
-    def _apply_merge(self, result: ProviderCollectionSuccess | ProviderCollectionFailure) -> None:
+    def _apply_merge(self, result: ProviderCollectionSuccess | ProviderCollectionFailure) -> bool:
         previous = dict(self._cache.stored.providers) if self._cache.stored is not None else {}
         merged = merge_collection_results(previous, (result,), settings=self._stale_settings)
         if not merged:
-            return
+            return False
         snapshot = build_snapshot(merged, now=self._wall.now())
         self._cache.remember(snapshot)
-        try:
-            self._cache.persist()
-        except CacheSaveError:
-            pass
+        return True
+
+    def _persist_cache(self) -> None:
+        # CONTRACT: disk fsync 不得佔 _state_lock，否則另一個 provider 的 finish
+        # 與 usage／stop 都會被卡住（PR #10）。
+        with self._persist_lock:
+            try:
+                self._cache.persist()
+            except CacheSaveError:
+                pass
 
     def _internal_failure(self, provider_id: str) -> ProviderCollectionFailure:
         return ProviderCollectionFailure(

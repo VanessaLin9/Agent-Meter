@@ -48,9 +48,9 @@ Scheduler 只接線。它不得複製 second merge／fallback，也不得在 GET
 
 ## Settings apply
 
-序列化。順序：驗證 → atomic persist → commit runtime generation／active set。成功回傳代表新設定已生效。persist 失敗或 CAS conflict：runtime 不動。
+序列化。順序：驗證 → atomic persist → commit runtime generation／active set。成功回傳代表新設定已生效。persist 失敗或 CAS conflict：runtime 不動。未 `start()` 或已 `stop()` 時拒絕 apply，不寫 disk。`start()` 從 disk 重建 `_next_due`，不依賴 stop 前的 in-memory `_enabled`。
 
-關閉的 provider 立刻離開 public projection，不再排新工作。GET／health／usage 只讀投影並重算 age。
+關閉的 provider 立刻離開 public projection，不再排新工作。GET／health／usage 只讀投影並重算 age。cache persist 不得佔共用 state lock。
 
 ## Instance lock and shutdown
 
@@ -72,5 +72,6 @@ Scheduler 只接線。它不得複製 second merge／fallback，也不得在 GET
 | 第一次 typed failure | schema-valid `error`／`unavailable`，可形成完整 snapshot |
 | 設定損壞 | health `degraded`+`config_error`；不排程 |
 | cache save 失敗 | memory last-good 留下；health `cache_error` |
+| 未 start／已 stop 的 apply | `ServiceNotRunningError`；不寫 disk |
 | 晚到舊 generation | 丟棄 |
 | 第二 instance | `ServiceAlreadyRunningError` |
