@@ -56,7 +56,7 @@ Scheduler 只接線。它不得複製 second merge／fallback，也不得在 GET
 
 - 同一 `RuntimePaths.config_dir` 只能有一個 service。第二個 instance 拒絕啟動；錯誤不含 path 或 secret。
 - lock file：`config_dir/service.lock`。以 `O_NOFOLLOW` 開啟，拒絕 symlink。start 可建立缺的 private config dir，但不得把既有過寬目錄 chmod 成 `0700` 來通過 settings 檢查。
-- SIGINT／SIGTERM：停新排程、bump generation、等待 in-flight（上限 `POLL_TIMEOUT_SECONDS + 5`）、flush 有效 cache、釋放鎖。
+- SIGINT／SIGTERM：停新排程、bump generation、等待 in-flight（含 cache persist，上限 `POLL_TIMEOUT_SECONDS + 5`）、flush 有效 cache、釋放鎖。persist 仍卡住時不得 `pool.shutdown(wait=True)`。
 - Adapter 必須遵守 `deadline_seconds`。Python thread 殺不掉；shutdown 後晚到結果仍被 generation 丟掉。
 
 ## Logging

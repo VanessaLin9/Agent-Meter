@@ -218,12 +218,15 @@ class CollectorService:
             if scheduler is not None:
                 scheduler.join(timeout=self._shutdown_deadline_seconds)
             self._wait_for_idle()
+            idle = True
             if pool is not None:
                 with self._state_lock:
                     idle = not self._in_flight
+                # CONTRACT: persist 仍在跑時不得 pool.shutdown(wait=True)，
+                # 否則 fsync 卡住會超過 POLL_TIMEOUT+5 的 shutdown 上限（PR #10）。
                 pool.shutdown(wait=idle, cancel_futures=True)
             if self._cache.stored is not None:
-                self._persist_cache()
+                self._persist_cache(timeout=None if idle else 0.0)
             self._instance_lock.release()
             self._started = False
 
@@ -452,15 +455,16 @@ class CollectorService:
         retry = 0
         persist = False
         with self._state_lock:
-            if self._in_flight.get(provider_id) == generation:
-                self._in_flight.pop(provider_id, None)
-            if (
+            stale = (
                 not self._running
                 or provider_id not in self._enabled
                 or self._generations.get(provider_id) != generation
-            ):
+            )
+            if stale:
                 # CONTRACT: 舊 generation 的 success／failure 都不寫 cache（PR #10）。
                 discarded = True
+                if self._in_flight.get(provider_id) == generation:
+                    self._in_flight.pop(provider_id, None)
             else:
                 persist = self._apply_merge(result)
                 if isinstance(result, ProviderCollectionSuccess):
@@ -481,6 +485,11 @@ class CollectorService:
         self._wakeup.notify()
         if persist:
             self._persist_cache()
+        if not discarded:
+            with self._state_lock:
+                if self._in_flight.get(provider_id) == generation:
+                    self._in_flight.pop(provider_id, None)
+            self._wakeup.notify()
 
     def _apply_merge(self, result: ProviderCollectionSuccess | ProviderCollectionFailure) -> bool:
         previous = dict(self._cache.stored.providers) if self._cache.stored is not None else {}
@@ -491,14 +500,23 @@ class CollectorService:
         self._cache.remember(snapshot)
         return True
 
-    def _persist_cache(self) -> None:
-        # CONTRACT: disk fsync 不得佔 _state_lock，否則另一個 provider 的 finish
-        # 與 usage／stop 都會被卡住（PR #10）。
-        with self._persist_lock:
+    def _persist_cache(self, *, timeout: float | None = None) -> None:
+        # CONTRACT: disk fsync 不得佔 _state_lock。shutdown 若仍可能有
+        # persist worker，只能 non-blocking 嘗試，不得無限等（PR #10）。
+        if timeout is None:
+            acquired = True
+            self._persist_lock.acquire()
+        else:
+            acquired = self._persist_lock.acquire(timeout=timeout)
+        if not acquired:
+            return
+        try:
             try:
                 self._cache.persist()
             except CacheSaveError:
                 pass
+        finally:
+            self._persist_lock.release()
 
     def _internal_failure(self, provider_id: str) -> ProviderCollectionFailure:
         return ProviderCollectionFailure(
