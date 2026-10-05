@@ -220,8 +220,12 @@ class CollectorService:
             if self._cache.stored is not None:
                 self._request_persist()
             self._wait_for_idle()
-            self._instance_lock.release()
             self._started = False
+            # CONTRACT: persist 仍可能寫 cache 時不得放鎖，否則下一 instance
+            # 會寫入更新資料，晚到的舊 persist 再覆蓋（PR #10）。process 退出
+            # 會關掉 lock fd。
+            if not self._persist_still_active():
+                self._instance_lock.release()
 
     def apply_settings(self, request: SettingsWriteRequest) -> Settings:
         """Persist first, then commit runtime. Failure leaves the previous generation."""
@@ -539,7 +543,14 @@ class CollectorService:
             finally:
                 with self._persist_cond:
                     self._persist_busy = False
+                    idle = not self._persist_pending
                     self._persist_cond.notify_all()
+                if idle and not self._started:
+                    self._instance_lock.release()
+
+    def _persist_still_active(self) -> bool:
+        with self._persist_cond:
+            return self._persist_pending or self._persist_busy
 
     def _wait_for_idle(self) -> None:
         deadline = time.monotonic() + self._shutdown_deadline_seconds

@@ -57,7 +57,7 @@ Scheduler 只接線。它不得複製 second merge／fallback，也不得在 GET
 
 - 同一 `RuntimePaths.config_dir` 只能有一個 service。第二個 instance 拒絕啟動；錯誤不含 path 或 secret。
 - lock file：`config_dir/service.lock`。以 `O_NOFOLLOW` 開啟，拒絕 symlink。start 可建立缺的 private config dir，但不得把既有過寬目錄 chmod 成 `0700` 來通過 settings 檢查。
-- SIGINT／SIGTERM：停新排程、bump generation、等待 in-flight collect 與 persist writer（上限 `POLL_TIMEOUT_SECONDS + 5`）、請求最後一次 cache flush、釋放鎖。
+- SIGINT／SIGTERM：停新排程、bump generation、等待 in-flight collect 與 persist writer（上限 `POLL_TIMEOUT_SECONDS + 5`）、請求最後一次 cache flush。persist 已結束才釋放鎖；若 persist 仍卡住，鎖留到 writer idle 或 process 退出關掉 lock fd，避免下一 instance 寫入後被舊 snapshot 覆蓋。
 - Collect 與 persist worker 必須是 daemon thread。`ThreadPoolExecutor` 的 non-daemon worker 會在 interpreter shutdown 被 join，卡住的 adapter／fsync 會讓 `python -m agent_meter.service` 在 `stop()` 返回後仍不退出。
 - Adapter 必須遵守 `deadline_seconds`。Python thread 殺不掉；shutdown 後晚到結果仍被 generation 丟掉。
 
