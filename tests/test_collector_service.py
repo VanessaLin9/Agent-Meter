@@ -1209,23 +1209,31 @@ def test_reenable_does_not_occupy_second_worker(tmp_path: Path) -> None:
         service.stop()
 
 
-def test_world_writable_config_dir_stays_config_error(tmp_path: Path) -> None:
+def test_world_writable_config_dir_is_rejected_without_repair(tmp_path: Path) -> None:
     factory = SpyFactory()
     factory.set_result("codex", _codex_ok())
     clocks = FakeClocks()
-    service, paths, _logs = _make_service(tmp_path, factory, clocks)
+    service, paths, logs = _make_service(tmp_path, factory, clocks)
     _save_settings(paths, "codex")
     os.chmod(paths.config_dir, 0o777)
-    service.start()
-    try:
-        health = service.health()
-        assert health.state == "degraded"
-        assert health.error is not None
-        assert health.error.code == "config_error"
-        assert factory.collect_calls == []
-        assert stat.S_IMODE(paths.config_dir.stat().st_mode) == 0o777
-    finally:
-        service.stop()
+    with pytest.raises(ServiceLockError, match="could not lock"):
+        service.start()
+    assert factory.collect_calls == []
+    assert stat.S_IMODE(paths.config_dir.stat().st_mode) == 0o777
+    assert FAKE_SECRET not in logs.getvalue()
+
+
+def test_world_writable_empty_config_dir_is_rejected(tmp_path: Path) -> None:
+    factory = SpyFactory()
+    clocks = FakeClocks()
+    service, paths, logs = _make_service(tmp_path, factory, clocks)
+    paths.config_dir.mkdir()
+    os.chmod(paths.config_dir, 0o777)
+    with pytest.raises(ServiceLockError, match="could not lock"):
+        service.start()
+    assert factory.collect_calls == []
+    assert stat.S_IMODE(paths.config_dir.stat().st_mode) == 0o777
+    assert FAKE_SECRET not in logs.getvalue()
 
 
 def test_symlink_lock_file_is_rejected_without_following(tmp_path: Path) -> None:
@@ -1243,6 +1251,24 @@ def test_symlink_lock_file_is_rejected_without_following(tmp_path: Path) -> None
     assert FAKE_SECRET not in logs.getvalue()
     assert stat.S_IMODE(target.stat().st_mode) == 0o644
     assert target.read_text(encoding="utf-8") == FAKE_SECRET
+
+
+def test_hard_linked_lock_file_is_rejected_without_chmod(tmp_path: Path) -> None:
+    factory = SpyFactory()
+    clocks = FakeClocks()
+    service, paths, logs = _make_service(tmp_path, factory, clocks)
+    _save_settings(paths, "codex")
+    target = tmp_path / "outside.lock"
+    target.write_text(FAKE_SECRET, encoding="utf-8")
+    os.chmod(target, 0o644)
+    os.link(target, paths.service_lock_file)
+    with pytest.raises(ServiceLockError) as excinfo:
+        service.start()
+    assert FAKE_SECRET not in str(excinfo.value)
+    assert FAKE_SECRET not in logs.getvalue()
+    assert stat.S_IMODE(target.stat().st_mode) == 0o644
+    assert target.read_text(encoding="utf-8") == FAKE_SECRET
+    assert target.stat().st_nlink == 2
 
 
 def test_instance_lock_round_trip(tmp_path: Path) -> None:
