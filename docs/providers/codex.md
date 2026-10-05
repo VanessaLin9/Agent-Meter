@@ -41,8 +41,8 @@ Authentication 由 Codex app-server 管理。Adapter 不讀取、不輸出、不
 - Command 不存在 → `not_installed`。
 - App-server 無登入狀態（JSON-RPC error 含 unauthenticated／unauthorized／not logged in 等信號）→ `not_authenticated`。不得複製 upstream error.message。
 - Deadline exceeded → `timeout`。
-- Spawn／broken pipe／非 auth 的 JSON-RPC error／非零退出 → `upstream`。
-- EOF、mixed stdout、malformed JSON、缺 `result` 或缺合法 meter → `malformed_response`。
+- Spawn／broken pipe／非 auth 的 JSON-RPC error／非零退出 → `upstream`。stdout EOF 時若 child 已非零退出，算非零退出，不是 `malformed_response`。
+- EOF（child 仍活著或正常退出）、mixed stdout、malformed JSON、缺 `result` 或缺合法 meter → `malformed_response`。
 
 Last-good fallback 由 orchestrator 負責。Adapter 不寫 cache。
 

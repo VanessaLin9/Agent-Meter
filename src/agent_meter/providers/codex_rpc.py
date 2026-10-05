@@ -30,6 +30,9 @@ CODEX_SOURCE = "codex_app_server"
 DEFAULT_DEADLINE_SECONDS = 10.0
 DEFAULT_MAX_LINE_BYTES = 1_048_576
 _TERMINATE_GRACE_SECONDS = 1.0
+# CONTRACT: stdout EOF 可與 child 非零退出 race；短暫 wait 再決定
+# process_exited vs eof，避免把 upstream 誤判成 malformed_response。
+_EOF_REAP_SECONDS = 0.1
 # PROVIDER: handshake ids follow the proven app-server JSONL sequence, not
 # sequential 1/2. Pairing is by these ids, never by stdout line order（PR #5）。
 _INITIALIZE_ID = 1
@@ -260,7 +263,13 @@ def _wait_result(
     while True:
         message = _read_message(reader, deadline=deadline, max_line_bytes=max_line_bytes)
         if message is None:
-            if proc.poll() not in (None, 0):
+            returncode = proc.poll()
+            if returncode is None:
+                try:
+                    returncode = proc.wait(timeout=_EOF_REAP_SECONDS)
+                except subprocess.TimeoutExpired:
+                    returncode = None
+            if returncode not in (None, 0):
                 raise _ProtocolError("process_exited")
             raise _ProtocolError("eof")
         if "id" not in message:
