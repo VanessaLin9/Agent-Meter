@@ -149,6 +149,8 @@ class CollectorService:
         self._persist_pending = False
         self._persist_busy = False
         self._persist_writer: Thread | None = None
+        self._lifecycle_generation = 0
+        self._persist_lock_epoch = 0
         self._running = False
         self._started = False
         self._runtime_settings: Settings | None = None
@@ -176,6 +178,9 @@ class CollectorService:
             try:
                 persist = self._restore()
                 self._ensure_persist_writer()
+                self._lifecycle_generation += 1
+                with self._persist_cond:
+                    self._persist_lock_epoch = 0
                 self._running = True
                 self._started = True
                 self._scheduler = Thread(
@@ -184,6 +189,8 @@ class CollectorService:
                     daemon=True,
                 )
                 self._scheduler.start()
+                if persist:
+                    self._request_persist()
             except Exception:
                 persist = False
                 self._running = False
@@ -191,8 +198,6 @@ class CollectorService:
                 self._instance_lock.release()
                 raise
         self._wakeup.notify()
-        if persist:
-            self._request_persist()
 
     def stop(self) -> None:
         """Stop scheduling, isolate in-flight generations, flush cache, release lock."""
@@ -223,8 +228,14 @@ class CollectorService:
             self._started = False
             # CONTRACT: persist 仍可能寫 cache 時不得放鎖，否則下一 instance
             # 會寫入更新資料，晚到的舊 persist 再覆蓋（PR #10）。process 退出
-            # 會關掉 lock fd。
-            if not self._persist_still_active():
+            # 會關掉 lock fd。舊 writer 只能在同一個 lifecycle epoch 放鎖。
+            with self._persist_cond:
+                lingering = self._persist_pending or self._persist_busy
+                if lingering:
+                    self._persist_lock_epoch = self._lifecycle_generation
+                else:
+                    self._persist_lock_epoch = 0
+            if not lingering:
                 self._instance_lock.release()
 
     def apply_settings(self, request: SettingsWriteRequest) -> Settings:
@@ -241,10 +252,10 @@ class CollectorService:
             with self._state_lock:
                 persist = self._commit_enabled(saved)
             self._wakeup.notify()
-        # CONTRACT: Claude waiting persist 不得佔 _apply_lock，否則 stop 進不去
-        # bounded shutdown（PR #10）。
-        if persist:
-            self._request_persist()
+            # CONTRACT: 只在 _apply_lock 內 enqueue persist，fsync 仍在 writer。
+            # 若等釋放 lock 才 enqueue，stop 會以為 writer idle 並放掉 instance lock（PR #10）。
+            if persist:
+                self._request_persist()
         return saved
 
     def usage(self) -> UsageSnapshot | ErrorEnvelope:
@@ -296,16 +307,17 @@ class CollectorService:
             deadline_seconds=POLL_TIMEOUT_SECONDS,
         )
         persist = False
-        with self._state_lock:
-            if (
-                not self._running
-                or CLAUDE_PROVIDER_ID not in self._enabled
-                or self._generations[CLAUDE_PROVIDER_ID] != generation
-            ):
-                return
-            persist = self._apply_merge(sanitized)
-        if persist:
-            self._request_persist()
+        with self._apply_lock:
+            with self._state_lock:
+                if (
+                    not self._running
+                    or CLAUDE_PROVIDER_ID not in self._enabled
+                    or self._generations[CLAUDE_PROVIDER_ID] != generation
+                ):
+                    return
+                persist = self._apply_merge(sanitized)
+            if persist:
+                self._request_persist()
 
     def _restore(self) -> bool:
         try:
@@ -457,44 +469,48 @@ class CollectorService:
         discarded = False
         retry = 0
         persist = False
-        with self._state_lock:
-            stale = (
-                not self._running
-                or provider_id not in self._enabled
-                or self._generations.get(provider_id) != generation
-            )
-            if stale:
-                # CONTRACT: 舊 generation 的 success／failure 都不寫 cache（PR #10）。
-                discarded = True
-                if self._in_flight.get(provider_id) == generation:
-                    self._in_flight.pop(provider_id, None)
-            else:
-                persist = self._apply_merge(result)
-                if isinstance(result, ProviderCollectionSuccess):
-                    self._failures[provider_id] = 0
-                    delay = float(POLL_INTERVAL_SECONDS)
-                    start = self._last_start.get(provider_id, self._mono.monotonic())
-                    nxt = start + delay
-                    now = self._mono.monotonic()
-                    self._next_due[provider_id] = now if nxt < now else nxt
+        try:
+            with self._state_lock:
+                stale = (
+                    not self._running
+                    or provider_id not in self._enabled
+                    or self._generations.get(provider_id) != generation
+                )
+                if stale:
+                    # CONTRACT: 舊 generation 的 success／failure 都不寫 cache（PR #10）。
+                    discarded = True
                 else:
-                    self._failures[provider_id] = self._failures.get(provider_id, 0) + 1
-                    retry = self._failures[provider_id]
-                    delay = float(poll_retry_delay_seconds(retry))
-                    self._next_due[provider_id] = self._mono.monotonic() + delay
-        self._log_collection(
-            provider_id, result, duration=duration, retry=retry, discarded=discarded
-        )
-        self._wakeup.notify()
-        if not discarded:
+                    persist = self._apply_merge(result)
+                    if isinstance(result, ProviderCollectionSuccess):
+                        self._failures[provider_id] = 0
+                        delay = float(POLL_INTERVAL_SECONDS)
+                        start = self._last_start.get(provider_id, self._mono.monotonic())
+                        nxt = start + delay
+                        now = self._mono.monotonic()
+                        self._next_due[provider_id] = now if nxt < now else nxt
+                    else:
+                        self._failures[provider_id] = self._failures.get(provider_id, 0) + 1
+                        retry = self._failures[provider_id]
+                        delay = float(poll_retry_delay_seconds(retry))
+                        self._next_due[provider_id] = self._mono.monotonic() + delay
+            # CONTRACT: persist enqueue 必須在釋放 collect slot 之前，stop 才
+            # 看得到 writer 仍 busy（PR #10）。fsync 本身仍在獨立 writer。
+            if persist:
+                self._request_persist()
+            self._wakeup.notify()
+        finally:
             with self._state_lock:
                 if self._in_flight.get(provider_id) == generation:
                     self._in_flight.pop(provider_id, None)
             self._wakeup.notify()
-        # CONTRACT: persist 在獨立 writer 合併寫入。collect slot 必須先釋放，
-        # 否則卡住的 fsync 會佔住兩個 provider、之後不再 refresh（PR #10）。
-        if persist:
-            self._request_persist()
+        try:
+            self._log_collection(
+                provider_id, result, duration=duration, retry=retry, discarded=discarded
+            )
+        except Exception:
+            # SECURITY: diagnostic I/O must not stick the collect slot or
+            # stringify the exception (PR #10).
+            pass
 
     def _apply_merge(self, result: ProviderCollectionSuccess | ProviderCollectionFailure) -> bool:
         previous = dict(self._cache.stored.providers) if self._cache.stored is not None else {}
@@ -544,13 +560,14 @@ class CollectorService:
                 with self._persist_cond:
                     self._persist_busy = False
                     idle = not self._persist_pending
+                    epoch = self._persist_lock_epoch
+                    generation = self._lifecycle_generation
+                    should_release = idle and epoch != 0 and epoch == generation
+                    if should_release:
+                        self._persist_lock_epoch = 0
                     self._persist_cond.notify_all()
-                if idle and not self._started:
+                if should_release:
                     self._instance_lock.release()
-
-    def _persist_still_active(self) -> bool:
-        with self._persist_cond:
-            return self._persist_pending or self._persist_busy
 
     def _wait_for_idle(self) -> None:
         deadline = time.monotonic() + self._shutdown_deadline_seconds

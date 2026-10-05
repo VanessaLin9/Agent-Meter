@@ -771,12 +771,107 @@ def test_stop_returns_within_deadline_while_claude_enable_persist_blocked(
         service.stop()
         elapsed = time.monotonic() - started
         assert elapsed < 1.5
+        other = CollectorService(
+            paths,
+            wall_clock=clocks,
+            monotonic_clock=clocks,
+            wakeup=FakeClocks(),
+            collector_factory=SpyFactory(),
+            stderr=logs,
+            shutdown_deadline_seconds=0.2,
+        )
+        with pytest.raises(ServiceAlreadyRunningError, match="already running"):
+            other.start()
+        other.stop()
     finally:
         persist_gate.set()
         worker.join(timeout=2)
         service.stop()
     assert failures == []
     assert FAKE_SECRET not in logs.getvalue()
+
+
+def test_restart_does_not_let_stale_persist_writer_release_lock(tmp_path: Path) -> None:
+    factory = SpyFactory()
+    factory.set_result("codex", _codex_ok())
+    clocks = FakeClocks()
+    paths = _paths(tmp_path)
+    logs = io.StringIO()
+    entered = threading.Event()
+    persist_gate = threading.Event()
+
+    class BlockingCache(PersistentSnapshotCache):
+        def persist(self) -> None:
+            entered.set()
+            persist_gate.wait(timeout=30)
+            super().persist()
+
+    service = CollectorService(
+        paths,
+        wall_clock=clocks,
+        monotonic_clock=clocks,
+        wakeup=clocks,
+        collector_factory=factory,
+        cache=BlockingCache(SnapshotCacheStore(paths), clocks),
+        stderr=logs,
+        shutdown_deadline_seconds=0.2,
+    )
+    other = CollectorService(
+        paths,
+        wall_clock=clocks,
+        monotonic_clock=clocks,
+        wakeup=FakeClocks(),
+        collector_factory=SpyFactory(),
+        stderr=logs,
+        shutdown_deadline_seconds=0.2,
+    )
+    _save_settings(paths, "codex")
+    service.start()
+    _wait_until(entered.is_set)
+    service.stop()
+    service.start()
+    persist_gate.set()
+    time.sleep(0.15)
+    try:
+        with pytest.raises(ServiceAlreadyRunningError, match="already running"):
+            other.start()
+    finally:
+        persist_gate.set()
+        other.stop()
+        service.stop()
+    assert FAKE_SECRET not in logs.getvalue()
+
+
+def test_log_error_does_not_stick_in_flight_slot(tmp_path: Path) -> None:
+    factory = SpyFactory()
+    factory.set_result("codex", lambda *, now, deadline_seconds: _codex_ok(collected_at=now))
+    clocks = FakeClocks()
+    paths = _paths(tmp_path)
+
+    class BoomStderr:
+        def write(self, _text: str) -> int:
+            raise OSError("broken pipe")
+
+        def flush(self) -> None:
+            return None
+
+    service = CollectorService(
+        paths,
+        wall_clock=clocks,
+        monotonic_clock=clocks,
+        wakeup=clocks,
+        collector_factory=factory,
+        stderr=BoomStderr(),  # type: ignore[arg-type]
+        shutdown_deadline_seconds=0.5,
+    )
+    _save_settings(paths, "codex")
+    service.start()
+    try:
+        _wait_until(lambda: factory.enter_counts.get("codex", 0) >= 1)
+        clocks.advance(POLL_INTERVAL_SECONDS)
+        _wait_until(lambda: factory.enter_counts.get("codex", 0) >= 2)
+    finally:
+        service.stop()
 
 
 def test_restart_restores_settings_and_last_good(tmp_path: Path) -> None:
@@ -1001,6 +1096,7 @@ def test_collector_exception_is_not_logged(tmp_path: Path) -> None:
     try:
         snapshot = _wait_usage_snapshot(service)
         assert snapshot.providers["codex"].status == "error"
+        _wait_until(lambda: "result=failure" in logs.getvalue())
         text = logs.getvalue()
         assert FAKE_SECRET not in text
         assert "Traceback" not in text
