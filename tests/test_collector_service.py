@@ -842,6 +842,59 @@ def test_restart_does_not_let_stale_persist_writer_release_lock(tmp_path: Path) 
     assert FAKE_SECRET not in logs.getvalue()
 
 
+def test_concurrent_restart_does_not_lose_instance_lock(tmp_path: Path) -> None:
+    factory = SpyFactory()
+    factory.set_result("codex", _codex_ok())
+    clocks = FakeClocks()
+    paths = _paths(tmp_path)
+    logs = io.StringIO()
+    entered = threading.Event()
+    persist_gate = threading.Event()
+
+    class BlockingCache(PersistentSnapshotCache):
+        def persist(self) -> None:
+            entered.set()
+            persist_gate.wait(timeout=30)
+            super().persist()
+
+    service = CollectorService(
+        paths,
+        wall_clock=clocks,
+        monotonic_clock=clocks,
+        wakeup=clocks,
+        collector_factory=factory,
+        cache=BlockingCache(SnapshotCacheStore(paths), clocks),
+        stderr=logs,
+        shutdown_deadline_seconds=0.2,
+    )
+    other = CollectorService(
+        paths,
+        wall_clock=clocks,
+        monotonic_clock=clocks,
+        wakeup=FakeClocks(),
+        collector_factory=SpyFactory(),
+        stderr=logs,
+        shutdown_deadline_seconds=0.2,
+    )
+    _save_settings(paths, "codex")
+    service.start()
+    _wait_until(entered.is_set)
+    service.stop()
+    unblock = threading.Thread(target=persist_gate.set)
+    unblock.start()
+    service.start()
+    unblock.join(timeout=2)
+    time.sleep(0.1)
+    try:
+        with pytest.raises(ServiceAlreadyRunningError, match="already running"):
+            other.start()
+    finally:
+        persist_gate.set()
+        other.stop()
+        service.stop()
+    assert FAKE_SECRET not in logs.getvalue()
+
+
 def test_log_error_does_not_stick_in_flight_slot(tmp_path: Path) -> None:
     factory = SpyFactory()
     factory.set_result("codex", lambda *, now, deadline_seconds: _codex_ok(collected_at=now))

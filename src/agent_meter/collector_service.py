@@ -174,13 +174,16 @@ class CollectorService:
         with self._apply_lock:
             if self._running:
                 return
-            self._instance_lock.acquire()
+            with self._persist_cond:
+                # CONTRACT: acquire、lifecycle bump、清 epoch 必須與 writer
+                # 的 release 在同一把 persist_cond 上互斥，否則舊 writer 會
+                # 放掉新 run 的鎖（PR #10）。
+                self._instance_lock.acquire()
+                self._lifecycle_generation += 1
+                self._persist_lock_epoch = 0
             try:
                 persist = self._restore()
                 self._ensure_persist_writer()
-                self._lifecycle_generation += 1
-                with self._persist_cond:
-                    self._persist_lock_epoch = 0
                 self._running = True
                 self._started = True
                 self._scheduler = Thread(
@@ -565,9 +568,8 @@ class CollectorService:
                     should_release = idle and epoch != 0 and epoch == generation
                     if should_release:
                         self._persist_lock_epoch = 0
+                        self._instance_lock.release()
                     self._persist_cond.notify_all()
-                if should_release:
-                    self._instance_lock.release()
 
     def _wait_for_idle(self) -> None:
         deadline = time.monotonic() + self._shutdown_deadline_seconds
