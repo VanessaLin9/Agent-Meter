@@ -39,7 +39,8 @@ Scheduler 只接線。它不得複製 second merge／fallback，也不得在 GET
 - 錯過的 tick 不堆積，slot 空了最多補一次。
 - 成功：下一輪以 start+300 為準（過期則立刻一次）。
 - 失敗：不在同一 job 內重試。下次等待 300 → 600 → 900 秒後封頂。re-enable 重置失敗計數。
-- 單一 worker 不得串行擋住其他 provider。執行緒上限是 polled provider 數量（2），禁止無限制 pool。
+- 單一 collect worker 不得串行擋住其他 provider。並行上限是 polled provider 數量（每 provider 一條 daemon thread），禁止無限制 thread。
+- cache persist 合到獨立 daemon writer；collect slot 在 fsync 前釋放。卡住的 persist 不得讓另一個 provider 停止 refresh。
 - Claude 不走 poller。
 
 ## Claude event source
@@ -48,7 +49,7 @@ Scheduler 只接線。它不得複製 second merge／fallback，也不得在 GET
 
 ## Settings apply
 
-序列化。順序：驗證 → atomic persist → commit runtime generation／active set。成功回傳代表新設定已生效。persist 失敗或 CAS conflict：runtime 不動。未 `start()` 或已 `stop()` 時拒絕 apply，不寫 disk。`start()` 從 disk 重建 `_next_due`，不依賴 stop 前的 in-memory `_enabled`。cache persist 不得佔 `_apply_lock`。
+序列化。順序：驗證 → atomic persist → commit runtime generation／active set。成功回傳代表新設定已生效。persist 失敗或 CAS conflict：runtime 不動。未 `start()` 或已 `stop()` 時拒絕 apply，不寫 disk。`start()` 從 disk 重建 `_next_due`，不依賴 stop 前的 in-memory `_enabled`。cache persist 不得佔 `_apply_lock`，也不得佔 collect slot。
 
 關閉的 provider 立刻離開 public projection，不再排新工作。GET／health／usage 只讀投影並重算 age。cache persist 不得佔共用 state lock。
 
@@ -56,7 +57,8 @@ Scheduler 只接線。它不得複製 second merge／fallback，也不得在 GET
 
 - 同一 `RuntimePaths.config_dir` 只能有一個 service。第二個 instance 拒絕啟動；錯誤不含 path 或 secret。
 - lock file：`config_dir/service.lock`。以 `O_NOFOLLOW` 開啟，拒絕 symlink。start 可建立缺的 private config dir，但不得把既有過寬目錄 chmod 成 `0700` 來通過 settings 檢查。
-- SIGINT／SIGTERM：停新排程、bump generation、等待 in-flight（含 cache persist，上限 `POLL_TIMEOUT_SECONDS + 5`）、flush 有效 cache、釋放鎖。persist 仍卡住時不得 `pool.shutdown(wait=True)`。
+- SIGINT／SIGTERM：停新排程、bump generation、等待 in-flight collect 與 persist writer（上限 `POLL_TIMEOUT_SECONDS + 5`）、請求最後一次 cache flush、釋放鎖。
+- Collect 與 persist worker 必須是 daemon thread。`ThreadPoolExecutor` 的 non-daemon worker 會在 interpreter shutdown 被 join，卡住的 adapter／fsync 會讓 `python -m agent_meter.service` 在 `stop()` 返回後仍不退出。
 - Adapter 必須遵守 `deadline_seconds`。Python thread 殺不掉；shutdown 後晚到結果仍被 generation 丟掉。
 
 ## Logging

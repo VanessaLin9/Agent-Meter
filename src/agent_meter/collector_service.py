@@ -19,8 +19,7 @@ Contract: `docs/contracts/collector-service.md` and
 from __future__ import annotations
 
 import time
-from concurrent.futures import ThreadPoolExecutor
-from threading import Lock, Thread
+from threading import Condition, Lock, Thread
 from typing import TextIO
 
 from agent_meter.aggregation import build_snapshot
@@ -66,8 +65,10 @@ from agent_meter.settings import (
 )
 from agent_meter.settings_store import SettingsConfigError, SettingsStore
 
-# CONTRACT: shutdown waits this long for in-flight jobs, then continues（PR #10）。
-# Adapters must honor deadline_seconds; leftover threads cannot be killed.
+# CONTRACT: shutdown waits this long for in-flight collect + persist, then
+# returns（PR #10）。Adapters must honor deadline_seconds; leftover threads
+# cannot be killed, so collect/persist workers are daemon and must not pin
+# the process after stop() returns.
 SHUTDOWN_DEADLINE_SECONDS = POLL_TIMEOUT_SECONDS + 5.0
 
 
@@ -144,6 +145,10 @@ class CollectorService:
         self._state_lock = Lock()
         self._apply_lock = Lock()
         self._persist_lock = Lock()
+        self._persist_cond = Condition()
+        self._persist_pending = False
+        self._persist_busy = False
+        self._persist_writer: Thread | None = None
         self._running = False
         self._started = False
         self._runtime_settings: Settings | None = None
@@ -154,7 +159,6 @@ class CollectorService:
         self._last_start: dict[EnabledProvider, float] = {}
         self._failures: dict[EnabledProvider, int] = {}
         self._collectors: dict[EnabledProvider, ProviderCollector] = {}
-        self._pool: ThreadPoolExecutor | None = None
         self._scheduler: Thread | None = None
 
     def start(self) -> None:
@@ -171,10 +175,7 @@ class CollectorService:
             self._instance_lock.acquire()
             try:
                 persist = self._restore()
-                self._pool = ThreadPoolExecutor(
-                    max_workers=len(POLLED_PROVIDER_IDS),
-                    thread_name_prefix="agent-meter-collect",
-                )
+                self._ensure_persist_writer()
                 self._running = True
                 self._started = True
                 self._scheduler = Thread(
@@ -187,14 +188,11 @@ class CollectorService:
                 persist = False
                 self._running = False
                 self._started = False
-                if self._pool is not None:
-                    self._pool.shutdown(wait=False, cancel_futures=True)
-                    self._pool = None
                 self._instance_lock.release()
                 raise
         self._wakeup.notify()
         if persist:
-            self._persist_cache()
+            self._request_persist()
 
     def stop(self) -> None:
         """Stop scheduling, isolate in-flight generations, flush cache, release lock."""
@@ -216,21 +214,12 @@ class CollectorService:
                 self._last_start.clear()
             self._wakeup.notify()
             scheduler = self._scheduler
-            pool = self._pool
             self._scheduler = None
-            self._pool = None
             if scheduler is not None:
                 scheduler.join(timeout=self._shutdown_deadline_seconds)
-            self._wait_for_idle()
-            idle = True
-            if pool is not None:
-                with self._state_lock:
-                    idle = not self._in_flight
-                # CONTRACT: persist 仍在跑時不得 pool.shutdown(wait=True)，
-                # 否則 fsync 卡住會超過 POLL_TIMEOUT+5 的 shutdown 上限（PR #10）。
-                pool.shutdown(wait=idle, cancel_futures=True)
             if self._cache.stored is not None:
-                self._persist_cache(timeout=0.0)
+                self._request_persist()
+            self._wait_for_idle()
             self._instance_lock.release()
             self._started = False
 
@@ -251,7 +240,7 @@ class CollectorService:
         # CONTRACT: Claude waiting persist 不得佔 _apply_lock，否則 stop 進不去
         # bounded shutdown（PR #10）。
         if persist:
-            self._persist_cache()
+            self._request_persist()
         return saved
 
     def usage(self) -> UsageSnapshot | ErrorEnvelope:
@@ -312,7 +301,7 @@ class CollectorService:
                 return
             persist = self._apply_merge(sanitized)
         if persist:
-            self._persist_cache()
+            self._request_persist()
 
     def _restore(self) -> bool:
         try:
@@ -379,7 +368,7 @@ class CollectorService:
             if provider_id not in POLLED_PROVIDER_IDS:
                 continue
             # CONTRACT: 任何 generation 的 in-flight 都佔 slot。re-enable 等
-            # 舊 job 結束才 dispatch，避免兩條 Codex 佔滿 max_workers=2（PR #10）。
+            # 舊 job 結束才 dispatch，避免同一 provider 兩條 collect 並行（PR #10）。
             if provider_id in self._in_flight:
                 continue
             scheduled = self._next_due.get(provider_id)
@@ -413,13 +402,18 @@ class CollectorService:
             generation = self._generations[provider_id]
             self._in_flight[provider_id] = generation
             self._last_start[provider_id] = self._mono.monotonic()
-        pool = self._pool
-        if pool is None:
-            self._finish_job(provider_id, generation, self._internal_failure(provider_id))
-            return
         try:
             collector = self._collector_for(provider_id)
-            pool.submit(self._run_job, provider_id, generation, collector)
+            # CONTRACT: collect workers are daemon threads. ThreadPoolExecutor
+            # atexit joins non-daemon workers, so a stuck adapter would keep
+            # `python -m agent_meter.service` alive after stop()（PR #10）。
+            thread = Thread(
+                target=self._run_job,
+                args=(provider_id, generation, collector),
+                name=f"agent-meter-collect-{provider_id}",
+                daemon=True,
+            )
+            thread.start()
         except Exception:
             self._finish_job(provider_id, generation, self._internal_failure(provider_id))
 
@@ -488,13 +482,15 @@ class CollectorService:
             provider_id, result, duration=duration, retry=retry, discarded=discarded
         )
         self._wakeup.notify()
-        if persist:
-            self._persist_cache()
         if not discarded:
             with self._state_lock:
                 if self._in_flight.get(provider_id) == generation:
                     self._in_flight.pop(provider_id, None)
             self._wakeup.notify()
+        # CONTRACT: persist 在獨立 writer 合併寫入。collect slot 必須先釋放，
+        # 否則卡住的 fsync 會佔住兩個 provider、之後不再 refresh（PR #10）。
+        if persist:
+            self._request_persist()
 
     def _apply_merge(self, result: ProviderCollectionSuccess | ProviderCollectionFailure) -> bool:
         previous = dict(self._cache.stored.providers) if self._cache.stored is not None else {}
@@ -505,23 +501,59 @@ class CollectorService:
         self._cache.remember(snapshot)
         return True
 
-    def _persist_cache(self, *, timeout: float | None = None) -> None:
-        # CONTRACT: disk fsync 不得佔 _state_lock。shutdown 若仍可能有
-        # persist worker，只能 non-blocking 嘗試，不得無限等（PR #10）。
-        if timeout is None:
-            acquired = True
-            self._persist_lock.acquire()
-        else:
-            acquired = self._persist_lock.acquire(timeout=timeout)
-        if not acquired:
+    def _ensure_persist_writer(self) -> None:
+        with self._persist_cond:
+            self._spawn_persist_writer_locked()
+
+    def _request_persist(self) -> None:
+        with self._persist_cond:
+            self._spawn_persist_writer_locked()
+            self._persist_pending = True
+            self._persist_cond.notify_all()
+
+    def _spawn_persist_writer_locked(self) -> None:
+        writer = self._persist_writer
+        if writer is not None and writer.is_alive():
             return
-        try:
+        thread = Thread(
+            target=self._run_persist_writer,
+            name="agent-meter-persist",
+            daemon=True,
+        )
+        self._persist_writer = thread
+        thread.start()
+
+    def _run_persist_writer(self) -> None:
+        while True:
+            with self._persist_cond:
+                while not self._persist_pending:
+                    self._persist_cond.wait()
+                self._persist_pending = False
+                self._persist_busy = True
             try:
-                self._cache.persist()
-            except CacheSaveError:
-                pass
-        finally:
-            self._persist_lock.release()
+                with self._persist_lock:
+                    try:
+                        self._cache.persist()
+                    except CacheSaveError:
+                        pass
+            finally:
+                with self._persist_cond:
+                    self._persist_busy = False
+                    self._persist_cond.notify_all()
+
+    def _wait_for_idle(self) -> None:
+        deadline = time.monotonic() + self._shutdown_deadline_seconds
+        while time.monotonic() < deadline:
+            with self._state_lock:
+                collecting = bool(self._in_flight)
+            with self._persist_cond:
+                persisting = self._persist_pending or self._persist_busy
+            if not collecting and not persisting:
+                return
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return
+            time.sleep(min(0.01, remaining))
 
     def _internal_failure(self, provider_id: str) -> ProviderCollectionFailure:
         return ProviderCollectionFailure(
@@ -531,14 +563,6 @@ class CollectorService:
             message="Provider collection failed",
             retryable=True,
         )
-
-    def _wait_for_idle(self) -> None:
-        deadline = time.monotonic() + self._shutdown_deadline_seconds
-        while time.monotonic() < deadline:
-            with self._state_lock:
-                if not self._in_flight:
-                    return
-            time.sleep(0.01)
 
     def _log_collection(
         self,

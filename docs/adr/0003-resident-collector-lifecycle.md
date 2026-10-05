@@ -19,4 +19,4 @@ One-shot `python -m agent_meter` collects every adapter once. The desktop servic
 
 ## Consequences
 
-GET /usage remains a read of the projected snapshot. B2-04 FastAPI handlers inject this service. B2-05 supplies Claude mailbox events through `ingest_claude_event` with the current generation. Shutdown cannot kill Python threads; adapters must honor `deadline_seconds`, and generation fencing still discards late writes.
+GET /usage remains a read of the projected snapshot. B2-04 FastAPI handlers inject this service. B2-05 supplies Claude mailbox events through `ingest_claude_event` with the current generation. Shutdown cannot kill Python threads; collect and persist workers are daemon so the process can exit after the deadline, adapters must honor `deadline_seconds`, and generation fencing still discards late writes. Cache persist is coalesced on a dedicated writer so a stalled fsync cannot occupy both provider slots.

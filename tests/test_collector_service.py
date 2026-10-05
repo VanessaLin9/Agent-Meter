@@ -588,6 +588,49 @@ def test_cache_persist_does_not_block_usage_reads(tmp_path: Path) -> None:
         service.stop()
 
 
+def test_stalled_persist_does_not_block_other_provider_refresh(tmp_path: Path) -> None:
+    factory = SpyFactory()
+    factory.set_result("codex", lambda *, now, deadline_seconds: _codex_ok(collected_at=now))
+    factory.set_result("cursor", lambda *, now, deadline_seconds: _cursor_ok(collected_at=now))
+    clocks = FakeClocks()
+    paths = _paths(tmp_path)
+    logs = io.StringIO()
+    entered = threading.Event()
+    persist_gate = threading.Event()
+
+    class BlockingCache(PersistentSnapshotCache):
+        def persist(self) -> None:
+            entered.set()
+            persist_gate.wait(timeout=30)
+            super().persist()
+
+    service = CollectorService(
+        paths,
+        wall_clock=clocks,
+        monotonic_clock=clocks,
+        wakeup=clocks,
+        collector_factory=factory,
+        cache=BlockingCache(SnapshotCacheStore(paths), clocks),
+        stderr=logs,
+        shutdown_deadline_seconds=0.5,
+    )
+    _save_settings(paths, "codex", "cursor")
+    service.start()
+    try:
+        _wait_until(entered.is_set)
+        _wait_until(lambda: len(factory.collect_calls) >= 2)
+        first_codex = factory.enter_counts.get("codex", 0)
+        first_cursor = factory.enter_counts.get("cursor", 0)
+        assert first_codex >= 1
+        assert first_cursor >= 1
+        clocks.advance(POLL_INTERVAL_SECONDS)
+        _wait_until(lambda: factory.enter_counts.get("codex", 0) > first_codex)
+        _wait_until(lambda: factory.enter_counts.get("cursor", 0) > first_cursor)
+    finally:
+        persist_gate.set()
+        service.stop()
+
+
 def test_stop_returns_within_deadline_while_persist_blocked(tmp_path: Path) -> None:
     factory = SpyFactory()
     factory.set_result("codex", _codex_ok())
@@ -879,7 +922,12 @@ def test_shutdown_returns_within_deadline_while_job_blocked(tmp_path: Path) -> N
     started = time.monotonic()
     service.stop()
     elapsed = time.monotonic() - started
+    leftovers = [
+        item for item in threading.enumerate() if item.name.startswith("agent-meter-collect-")
+    ]
     assert elapsed < 1.5
+    assert leftovers
+    assert all(item.daemon for item in leftovers)
     gate.set()
     time.sleep(0.05)
     assert FAKE_SECRET not in logs.getvalue()
