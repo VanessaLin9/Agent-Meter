@@ -74,10 +74,20 @@ class ServiceInstanceLock:
             raise ServiceLockError() from None
         try:
             info = os.fstat(fd)
-            if not stat.S_ISREG(info.st_mode):
+            # SECURITY: hard link 的 fchmod／flock 會改到目錄外的 inode（PR #10）。
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
                 raise OSError()
             os.fchmod(fd, LOCK_FILE_MODE)
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            locked = os.fstat(fd)
+            path_info = os.lstat(lock_path)
+            if (
+                not stat.S_ISREG(locked.st_mode)
+                or locked.st_nlink != 1
+                or locked.st_ino != path_info.st_ino
+                or locked.st_dev != path_info.st_dev
+            ):
+                raise OSError()
         except BlockingIOError:
             os.close(fd)
             raise ServiceAlreadyRunningError() from None
@@ -87,14 +97,13 @@ class ServiceInstanceLock:
         self._fd = fd
 
     def _prepare_lock_dir(self) -> None:
-        # SECURITY: 既有 config_dir 不得在 load() 前被 chmod 成 0700，否則
-        # world-writable 目錄裡的 settings.json 會通過 private-mode 檢查並
-        # 開始 live poll（PR #10）。缺目錄才建立；symlink／非目錄仍拒絕。
+        # SECURITY: 既有過寬 config_dir 不得 chmod 成 0700 來通過檢查，也不得
+        # 在可被他人置換的目錄裡放 service.lock（PR #10）。缺目錄才建立 0700。
         config_dir = self._paths.config_dir
         if is_absent(config_dir):
             prepare_private_dir(config_dir)
             return
-        reject_unsafe_dir(config_dir, require_private_mode=False)
+        reject_unsafe_dir(config_dir, require_private_mode=True)
 
     def release(self) -> None:
         fd = self._fd
