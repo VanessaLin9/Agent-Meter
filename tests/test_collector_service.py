@@ -668,6 +668,64 @@ def test_stop_returns_within_deadline_while_persist_blocked(tmp_path: Path) -> N
     assert FAKE_SECRET not in logs.getvalue()
 
 
+def test_stop_keeps_instance_lock_while_persist_blocked(tmp_path: Path) -> None:
+    factory = SpyFactory()
+    factory.set_result("codex", _codex_ok())
+    clocks = FakeClocks()
+    paths = _paths(tmp_path)
+    logs = io.StringIO()
+    entered = threading.Event()
+    persist_gate = threading.Event()
+
+    class BlockingCache(PersistentSnapshotCache):
+        def persist(self) -> None:
+            entered.set()
+            persist_gate.wait(timeout=30)
+            super().persist()
+
+    service = CollectorService(
+        paths,
+        wall_clock=clocks,
+        monotonic_clock=clocks,
+        wakeup=clocks,
+        collector_factory=factory,
+        cache=BlockingCache(SnapshotCacheStore(paths), clocks),
+        stderr=logs,
+        shutdown_deadline_seconds=0.2,
+    )
+    other = CollectorService(
+        paths,
+        wall_clock=clocks,
+        monotonic_clock=clocks,
+        wakeup=FakeClocks(),
+        collector_factory=SpyFactory(),
+        stderr=logs,
+        shutdown_deadline_seconds=0.2,
+    )
+    _save_settings(paths, "codex")
+    service.start()
+    _wait_until(entered.is_set)
+    service.stop()
+    try:
+        with pytest.raises(ServiceAlreadyRunningError, match="already running"):
+            other.start()
+        persist_gate.set()
+
+        def _other_started() -> bool:
+            try:
+                other.start()
+            except ServiceAlreadyRunningError:
+                return False
+            return True
+
+        _wait_until(_other_started)
+    finally:
+        persist_gate.set()
+        other.stop()
+        service.stop()
+    assert FAKE_SECRET not in logs.getvalue()
+
+
 def test_stop_returns_within_deadline_while_claude_enable_persist_blocked(
     tmp_path: Path,
 ) -> None:
